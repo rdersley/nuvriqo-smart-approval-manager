@@ -1,6 +1,7 @@
 import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 import { kvs } from '@forge/kvs';
+import { resolveDisplayName } from './users.js';
 
 const resolver = new Resolver();
 const configKey = (projectId) => `config#${projectId}`;
@@ -43,10 +44,10 @@ function cleanRules(rules) {
       operator: ['equals', 'notEquals', 'contains', 'isEmpty', 'notEmpty'].includes(c?.operator) ? c.operator : 'equals',
       value: clean(c?.value, 1000),
     })).filter((c) => c.fieldId),
+    // Persist only stable Atlassian account IDs; resolve display names when settings are read.
     approvers: (Array.isArray(rule?.approvers) ? rule.approvers : []).slice(0, 20).map((a) => ({
       accountId: clean(a?.accountId, 200),
-      displayName: clean(a?.displayName, 200),
-    })).filter((a) => a.accountId),
+    })).filter((a) => a.accountId && a.accountId !== 'unknown'),
     message: clean(rule?.message, 2000),
     reminderHours: Math.min(720, Math.max(1, Number(rule?.reminderHours || 24))),
     pendingTargetStatus: clean(rule?.pendingTargetStatus, 200),
@@ -56,6 +57,20 @@ function cleanRules(rules) {
     approveTransitionId: clean(rule?.approveTransitionId, 100),
     declineTransitionId: clean(rule?.declineTransitionId, 100),
   }));
+}
+
+async function enrichRules(rules) {
+  return Promise.all((Array.isArray(rules) ? rules : []).map(async (rule) => ({
+    ...rule,
+    approvers: await Promise.all((rule.approvers || []).map(async (a) => ({
+      accountId: a.accountId,
+      displayName: await resolveDisplayName(a.accountId),
+    }))),
+  })));
+}
+
+async function enrichSettings(settings) {
+  return { ...settings, autoRules: await enrichRules(settings.autoRules) };
 }
 
 const defaults = {
@@ -76,7 +91,8 @@ resolver.define('getSettings', async ({ payload }) => {
   const projectId = clean(payload?.projectId, 100);
   if (!projectId) throw new Error('Project context is required.');
   await assertProjectAdmin(projectId);
-  return { ...defaults, ...((await kvs.get(configKey(projectId))) || {}) };
+  const stored = { ...defaults, ...((await kvs.get(configKey(projectId))) || {}) };
+  return enrichSettings(stored);
 });
 
 resolver.define('getRuleBuilderMetadata', async ({ payload }) => {
@@ -166,7 +182,7 @@ resolver.define('saveSettings', async ({ payload }) => {
     autoRules: cleanRules(incoming.autoRules),
   };
   await kvs.set(configKey(projectId), settings);
-  return settings;
+  return enrichSettings(settings);
 });
 
 export const handler = resolver.getDefinitions();
