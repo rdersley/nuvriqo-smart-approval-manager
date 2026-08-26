@@ -1,5 +1,7 @@
 app:
   id: ari:cloud:ecosystem::app/64448e4c-1a3a-4dd4-a8e7-c198c6d5eaad
+  licensing:
+    enabled: true
   runtime:
     name: nodejs24.x
     memoryMB: 256
