@@ -1,0 +1,94 @@
+app:
+  id: ari:cloud:ecosystem::app/64448e4c-1a3a-4dd4-a8e7-c198c6d5eaad
+  runtime:
+    name: nodejs24.x
+    memoryMB: 256
+    architecture: arm64
+
+modules:
+  jira:issuePanel:
+    - key: smart-approval-agent-panel
+      resource: agent-panel
+      resolver:
+        function: resolver
+      render: native
+      title: Smart Approval
+      icon: https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg
+
+  jira:projectSettingsPage:
+    - key: smart-approval-project-settings
+      resource: settings-page
+      resolver:
+        function: config-resolver
+      render: native
+      title: Smart Approval Manager
+
+  jiraServiceManagement:portalSubheader:
+    - key: smart-approval-portal-summary
+      resource: portal-summary
+      resolver:
+        function: portal-resolver
+      render: native
+      unlicensedAccess:
+        - customer
+        - unlicensed
+
+  jiraServiceManagement:portalUserMenuAction:
+    - key: smart-approval-my-approvals
+      resource: portal-approvals
+      resolver:
+        function: portal-resolver
+      render: native
+      title: My Approvals
+      viewportSize: large
+      unlicensedAccess:
+        - customer
+        - unlicensed
+
+  trigger:
+    - key: smart-approval-auto-rules
+      function: auto-rule-worker
+      events:
+        - avi:jira:created:issue
+        - avi:jira:updated:issue
+      filter:
+        ignoreSelf: true
+
+  function:
+    - key: resolver
+      handler: backend/index.handler
+    - key: portal-resolver
+      handler: backend/portal.handler
+    - key: config-resolver
+      handler: backend/config.handler
+    - key: auto-rule-worker
+      handler: backend/automation.run
+    - key: reminder-worker
+      handler: backend/reminders.run
+      timeoutSeconds: 120
+
+  scheduledTrigger:
+    - key: smart-approval-reminders
+      function: reminder-worker
+      interval: hour
+
+resources:
+  - key: agent-panel
+    path: src/frontend/agent.jsx
+  - key: portal-summary
+    path: src/frontend/portal-summary.jsx
+  - key: portal-approvals
+    path: src/frontend/portal-approvals.jsx
+  - key: settings-page
+    path: src/frontend/settings.jsx
+
+permissions:
+  scopes:
+    - storage:app
+    - read:jira-work
+    - write:jira-work
+    - read:jira-user
+    - read:servicedesk-request
+    - write:servicedesk-request
+    - read:user:jira
+    - manage:jira-configuration

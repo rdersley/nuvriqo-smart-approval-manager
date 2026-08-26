@@ -1,0 +1,20 @@
+{
+  "name": "nuvriqo-smart-approval-manager",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Simple customer approvals for Jira Service Management",
+  "main": "src/backend/index.js",
+  "scripts": {
+    "lint": "forge lint",
+    "deploy": "forge deploy",
+    "test": "node --check src/backend/index.js && node --check src/backend/portal.js && node --check src/backend/config.js && node --check src/backend/automation.js && node --check src/backend/reminders.js"
+  },
+  "dependencies": {
+    "@forge/api": "latest",
+    "@forge/bridge": "latest",
+    "@forge/kvs": "latest",
+    "@forge/react": "latest",
+    "@forge/resolver": "latest",
+    "react": "latest"
+  }
+}
