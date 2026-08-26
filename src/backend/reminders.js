@@ -1,5 +1,6 @@
 import { kvs, WhereConditions } from '@forge/kvs';
 import api, { route } from '@forge/api';
+import { resolveDisplayName, stripStoredDisplayName } from './users.js';
 
 async function queryPending(max = 200) {
   let cursor;
@@ -15,10 +16,11 @@ async function queryPending(max = 200) {
 }
 
 async function save(record) {
+  const stored = stripStoredDisplayName(record);
   await Promise.all([
-    kvs.set(`approval#${record.id}`, record),
-    kvs.set(`issue#${record.issueKey}#${record.createdAt}#${record.id}`, record),
-    kvs.set(`approver#${record.approver.accountId}#${record.createdAt}#${record.id}`, record),
+    kvs.set(`approval#${stored.id}`, stored),
+    kvs.set(`issue#${stored.issueKey}#${stored.createdAt}#${stored.id}`, stored),
+    kvs.set(`approver#${stored.approver.accountId}#${stored.createdAt}#${stored.id}`, stored),
   ]);
 }
 
@@ -37,7 +39,8 @@ export async function run() {
   for (const record of pending) {
     if (!record.nextReminderAt || Date.parse(record.nextReminderAt) > now) continue;
     try {
-      await comment(record.issueKey, `Reminder: approval is still waiting for ${record.approver.displayName}. Please open My Approvals in the customer portal.`);
+      const displayName = await resolveDisplayName(record.approver?.accountId);
+      await comment(record.issueKey, `Reminder: approval is still waiting for ${displayName}. Please open My Approvals in the customer portal.`);
       const at = new Date().toISOString();
       record.reminderCount = Number(record.reminderCount || 0) + 1;
       record.updatedAt = at;
