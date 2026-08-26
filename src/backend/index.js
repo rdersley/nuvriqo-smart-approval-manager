@@ -1,6 +1,7 @@
 import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
+import { enrichApproval, resolveDisplayName, stripStoredDisplayName } from './users.js';
 
 const resolver = new Resolver();
 const nowIso = () => new Date().toISOString();
@@ -32,10 +33,11 @@ async function queryPrefix(prefix, max = 200) {
 }
 
 async function saveApproval(record) {
+  const stored = stripStoredDisplayName(record);
   await Promise.all([
-    kvs.set(approvalKey(record.id), record),
-    kvs.set(issueIndexKey(record.issueKey, record.createdAt, record.id), record),
-    kvs.set(approverIndexKey(record.approver.accountId, record.createdAt, record.id), record),
+    kvs.set(approvalKey(stored.id), stored),
+    kvs.set(issueIndexKey(stored.issueKey, stored.createdAt, stored.id), stored),
+    kvs.set(approverIndexKey(stored.approver.accountId, stored.createdAt, stored.id), stored),
   ]);
 }
 
@@ -95,7 +97,8 @@ resolver.define('getIssueApprovals', async ({ payload }) => {
   if (!issueKey) return [];
   await getIssueAsUser(issueKey);
   const rows = await queryPrefix(`issue#${issueKey}#`, 200);
-  return rows.map((r) => r.value).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const records = rows.map((r) => r.value).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return Promise.all(records.map(enrichApproval));
 });
 
 resolver.define('getApprovalDefaults', async ({ payload }) => {
@@ -104,10 +107,20 @@ resolver.define('getApprovalDefaults', async ({ payload }) => {
   const issue = await getIssueAsUser(issueKey);
   const settings = (await kvs.get(configKey(String(issue.fields.project.id)))) || {};
   const suggestion = await kvs.get(suggestionKey(issueKey));
+  let enrichedSuggestion = null;
+  if (suggestion) {
+    enrichedSuggestion = {
+      ...suggestion,
+      approvers: await Promise.all((suggestion.approvers || []).map(async (a) => ({
+        accountId: a.accountId,
+        displayName: await resolveDisplayName(a.accountId),
+      }))),
+    };
+  }
   return {
     defaultApprovalMode: settings.defaultApprovalMode === 'any' ? 'any' : 'all',
     reminderHours: Math.min(720, Math.max(1, Number(settings.reminderHours || 24))),
-    suggestion: suggestion || null,
+    suggestion: enrichedSuggestion,
   };
 });
 
@@ -127,7 +140,7 @@ resolver.define('createApproval', async ({ payload, context }) => {
   const seen = new Set();
   for (const requested of requestedApprovers.slice(0, 20)) {
     const accountId = clean(requested?.accountId, 200);
-    if (!accountId || seen.has(accountId)) continue;
+    if (!accountId || accountId === 'unknown' || seen.has(accountId)) continue;
     seen.add(accountId);
     if (pendingAccountIds.has(accountId)) continue;
     const canonical = await getCanonicalUser(accountId);
@@ -151,7 +164,7 @@ resolver.define('createApproval', async ({ payload, context }) => {
       id: uid(), groupId, approvalMode, groupSize: canonicalApprovers.length,
       issueKey, issueId: issue.id, projectId: String(issue.fields.project.id), projectKey: issue.fields.project.key,
       summary: clean(issue.fields.summary, 500), issueStatus: clean(issue.fields.status?.name, 200),
-      approver: { accountId: canonical.accountId, displayName: clean(canonical.displayName, 200) },
+      approver: { accountId: canonical.accountId },
       requestedBy: { accountId: context.accountId || 'unknown' },
       source: prepared ? 'rule-assisted' : 'manual',
       ruleId: prepared ? clean(prepared.ruleId, 200) : '',
@@ -166,7 +179,7 @@ resolver.define('createApproval', async ({ payload, context }) => {
     await saveApproval(record); records.push(record);
   }
 
-  const names = records.map((r) => r.approver.displayName).join(', ');
+  const names = canonicalApprovers.map((u) => clean(u.displayName, 200) || 'Approver').join(', ');
   const modeText = records.length > 1 ? (approvalMode === 'all' ? ' All approvers must approve.' : ' Any one approver can approve.') : '';
   await addPublicComment(issueKey, `Approval requested from ${names}.${modeText} Please open My Approvals in the customer portal to review this request.`);
 
@@ -177,7 +190,7 @@ resolver.define('createApproval', async ({ payload, context }) => {
     catch (error) { console.warn('Approval pending transition failed', error?.message || error); }
   }
   if (prepared) await kvs.delete(suggestionKey(issueKey));
-  return records;
+  return Promise.all(records.map(enrichApproval));
 });
 
 resolver.define('sendReminder', async ({ payload, context }) => {
@@ -189,8 +202,9 @@ resolver.define('sendReminder', async ({ payload, context }) => {
   record.nextReminderAt = new Date(Date.now() + Number(record.reminderHours || 24) * 3600000).toISOString();
   record.events = [...(record.events || []), { type: 'reminder', at, by: context.accountId || 'agent' }];
   await saveApproval(record);
-  await addPublicComment(record.issueKey, `Reminder: approval is still waiting for ${record.approver.displayName}. Please open My Approvals in the customer portal.`);
-  return record;
+  const name = await resolveDisplayName(record.approver.accountId);
+  await addPublicComment(record.issueKey, `Reminder: approval is still waiting for ${name}. Please open My Approvals in the customer portal.`);
+  return enrichApproval(record);
 });
 
 resolver.define('cancelApproval', async ({ payload, context }) => {
@@ -200,8 +214,9 @@ resolver.define('cancelApproval', async ({ payload, context }) => {
   const at = nowIso(); record.status = 'cancelled'; record.updatedAt = at; record.cancelledAt = at;
   record.events = [...(record.events || []), { type: 'cancelled', at, by: context.accountId || 'agent' }];
   await saveApproval(record);
-  await addPublicComment(record.issueKey, `Approval request for ${record.approver.displayName} was cancelled.`);
-  return record;
+  const name = await resolveDisplayName(record.approver.accountId);
+  await addPublicComment(record.issueKey, `Approval request for ${name} was cancelled.`);
+  return enrichApproval(record);
 });
 
 export const handler = resolver.getDefinitions();
