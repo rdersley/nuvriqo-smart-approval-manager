@@ -63,12 +63,12 @@ export async function run(event) {
   const seen = new Set();
   for (const configured of (Array.isArray(rule.approvers) ? rule.approvers : []).slice(0, 20)) {
     const accountId = clean(configured?.accountId, 200);
-    if (!accountId || seen.has(accountId)) continue;
+    if (!accountId || accountId === 'unknown' || seen.has(accountId)) continue;
     seen.add(accountId);
     try {
       const canonical = await json(await api.asApp().requestJira(route`/rest/api/3/user?accountId=${accountId}`));
       if (canonical?.accountId && canonical.active !== false) {
-        approvers.push({ accountId: canonical.accountId, displayName: clean(canonical.displayName, 200) });
+        approvers.push({ accountId: canonical.accountId });
       }
     } catch (error) {
       console.warn('Smart Approval: unable to resolve suggested approver', error?.message || error);
@@ -81,6 +81,7 @@ export async function run(event) {
   }
 
   // Matching rules only prepare the agent form. An agent must explicitly send the approval.
+  // Store only stable Atlassian account IDs; display names are resolved at read time.
   await kvs.set(suggestionKey(issueKey), {
     issueKey,
     projectId,
