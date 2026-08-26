@@ -1,1 +1,17 @@
-import React,{useEffect,useState}from'react';import ForgeReconciler,{Heading,Inline,Lozenge,Spinner,Stack,Text}from'@forge/react';import{invoke}from'@forge/bridge';const PortalSummary=()=>{const[items,setItems]=useState(null);useEffect(()=>{invoke('getMyApprovals',{status:'pending'}).then(setItems).catch(()=>setItems([]));},[]);if(items===null)return<Spinner/>;if(items.length===0)return<Stack><Heading size="small">My approvals</Heading><Text>You have no requests waiting for approval.</Text></Stack>;return<Stack space="space.100"><Inline space="space.100"><Heading size="small">My approvals</Heading><Lozenge appearance="inprogress">{items.length} waiting</Lozenge></Inline>{items.slice(0,5).map(a=><Text key={a.id}><Text weight="bold">{a.issueKey}</Text> — {a.summary}</Text>)}<Text>Open your profile menu and choose “My Approvals” to review and decide.</Text></Stack>};ForgeReconciler.render(<PortalSummary/>);
+import React, { useEffect, useState } from 'react';
+import ForgeReconciler, { Heading, Inline, Lozenge, Spinner, Stack, Text } from '@forge/react';
+import { invoke } from '@forge/bridge';
+
+const PortalSummary = () => {
+  const [items, setItems] = useState(null);
+  useEffect(() => { invoke('getMyApprovals', { status: 'pending' }).then(setItems).catch(() => setItems([])); }, []);
+  if (items === null) return <Spinner />;
+  if (items.length === 0) return <Stack space="space.050"><Heading size="small">My approvals</Heading><Text>You have no requests waiting for approval.</Text></Stack>;
+  return <Stack space="space.100">
+    <Inline space="space.100" alignBlock="center"><Heading size="small">My approvals</Heading><Lozenge appearance="inprogress">{items.length} waiting</Lozenge></Inline>
+    {items.slice(0, 5).map((a) => <Text key={a.id}><Text weight="bold">{a.issueKey}</Text> — {a.summary}</Text>)}
+    <Text>Open your profile menu and choose “My Approvals” to review and decide.</Text>
+  </Stack>;
+};
+
+ForgeReconciler.render(<PortalSummary />);
