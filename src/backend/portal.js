@@ -1,6 +1,7 @@
 import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
+import { enrichApproval, resolveDisplayName, stripStoredDisplayName } from './users.js';
 
 const resolver = new Resolver();
 const approvalKey = (id) => `approval#${id}`;
@@ -30,10 +31,11 @@ async function queryPrefix(prefix, max = 200) {
 }
 
 async function saveApproval(record) {
+  const stored = stripStoredDisplayName(record);
   await Promise.all([
-    kvs.set(approvalKey(record.id), record),
-    kvs.set(issueIndexKey(record.issueKey, record.createdAt, record.id), record),
-    kvs.set(approverIndexKey(record.approver.accountId, record.createdAt, record.id), record),
+    kvs.set(approvalKey(stored.id), stored),
+    kvs.set(issueIndexKey(stored.issueKey, stored.createdAt, stored.id), stored),
+    kvs.set(approverIndexKey(stored.approver.accountId, stored.createdAt, stored.id), stored),
   ]);
 }
 
@@ -101,7 +103,8 @@ resolver.define('getMyApprovals', async ({ payload, context }) => {
   const rows = await queryPrefix(`approver#${context.accountId}#`, 200);
   const all = rows.map((r) => r.value).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const filter = clean(payload?.status, 30);
-  return filter ? all.filter((r) => r.status === filter) : all;
+  const selected = filter ? all.filter((r) => r.status === filter) : all;
+  return Promise.all(selected.map(enrichApproval));
 });
 
 resolver.define('decideApproval', async ({ payload, context }) => {
@@ -126,7 +129,8 @@ resolver.define('decideApproval', async ({ payload, context }) => {
   record.updatedAt = at;
   record.events = [...(record.events || []), { type: decision, at, by: context.accountId, reason }];
   await saveApproval(record);
-  await addPublicComment(record.issueKey, `${record.approver.displayName} ${decision === 'approved' ? 'approved' : 'declined'} this request${reason ? `: ${reason}` : '.'}`);
+  const approverName = await resolveDisplayName(record.approver.accountId);
+  await addPublicComment(record.issueKey, `${approverName} ${decision === 'approved' ? 'approved' : 'declined'} this request${reason ? `: ${reason}` : '.'}`);
 
   const records = await groupRecords(record);
   const mode = record.approvalMode === 'any' ? 'any' : 'all';
@@ -163,7 +167,7 @@ resolver.define('decideApproval', async ({ payload, context }) => {
       ? `Approval complete. ${mode === 'all' && records.length > 1 ? 'All required approvers have approved.' : 'The required approval has been granted.'}`
       : `Approval declined. ${mode === 'all' && records.length > 1 ? 'A required approver declined the request.' : 'The approval requirement was not met.'}`);
   }
-  return record;
+  return enrichApproval(record);
 });
 
 export const handler = resolver.getDefinitions();
