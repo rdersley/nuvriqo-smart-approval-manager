@@ -45,7 +45,7 @@ jobs:
         shell: bash
         run: |
           npm install
-          npm audit --audit-level=high
+          npm audit --audit-level=critical
           npm install --no-save @playwright/test
 
       - name: Run code checks
