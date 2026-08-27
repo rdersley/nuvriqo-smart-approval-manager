@@ -1,0 +1,58 @@
+name: Deployed UI Tests
+
+on:
+  push:
+    branches: [automation/playwright-ui-tests]
+  workflow_dispatch:
+
+concurrency:
+  group: smart-approval-deployed-ui
+  cancel-in-progress: true
+
+jobs:
+  ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+      JIRA_TEST_ISSUE_KEY: ${{ secrets.JIRA_TEST_ISSUE_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Check test configuration
+        shell: bash
+        env:
+          JIRA_STORAGE_STATE_GZIP_B64: ${{ secrets.JIRA_STORAGE_STATE_GZIP_B64 }}
+        run: |
+          test -n "$JIRA_BASE_URL" || (echo "Missing JIRA_BASE_URL" && exit 1)
+          test -n "$JIRA_TEST_ISSUE_KEY" || (echo "Missing JIRA_TEST_ISSUE_KEY" && exit 1)
+          test -n "$JIRA_STORAGE_STATE_GZIP_B64" || (echo "Missing JIRA_STORAGE_STATE_GZIP_B64" && exit 1)
+      - name: Install dependencies
+        run: |
+          npm install
+          npm install --no-save @playwright/test
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Restore Jira session
+        shell: bash
+        env:
+          JIRA_STORAGE_STATE_GZIP_B64: ${{ secrets.JIRA_STORAGE_STATE_GZIP_B64 }}
+        run: |
+          mkdir -p .auth
+          printf '%s' "$JIRA_STORAGE_STATE_GZIP_B64" | base64 --decode | gzip --decompress > .auth/jira.json
+          test -s .auth/jira.json
+          node -e "JSON.parse(require('fs').readFileSync('.auth/jira.json','utf8')); console.log('Jira browser state restored')"
+      - name: Run Smart Approval deployed UI tests
+        run: npx playwright test ui-tests
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-evidence-${{ github.run_attempt }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14
