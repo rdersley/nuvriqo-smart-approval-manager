@@ -48,7 +48,7 @@ jobs:
         run: |
           npm install --global @forge/cli
           forge settings set usage-analytics false
-          forge lint
+          forge lint --environment "$FORGE_ENVIRONMENT"
 
       - name: Deploy exact Marketplace release candidate to Forge production
         run: forge deploy --environment "$FORGE_ENVIRONMENT" --non-interactive
