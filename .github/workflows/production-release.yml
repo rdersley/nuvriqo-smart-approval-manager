@@ -1,0 +1,54 @@
+name: Smart Approval Production Release
+
+on:
+  push:
+    branches: [release/smart-approval-production]
+  workflow_dispatch:
+
+concurrency:
+  group: smart-approval-production-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify-and-deploy-production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FORGE_EMAIL: ${{ secrets.FORGE_EMAIL }}
+      FORGE_API_TOKEN: ${{ secrets.FORGE_API_TOKEN }}
+      FORGE_ENVIRONMENT: production
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Check Forge credentials
+        shell: bash
+        run: |
+          test -n "$FORGE_EMAIL" || (echo "Missing FORGE_EMAIL" && exit 1)
+          test -n "$FORGE_API_TOKEN" || (echo "Missing FORGE_API_TOKEN" && exit 1)
+
+      - name: Install pinned dependencies
+        run: npm install --no-fund
+
+      - name: Security gate
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Run code and release regression checks
+        run: npm test
+
+      - name: Install Forge CLI and lint
+        shell: bash
+        run: |
+          npm install --global @forge/cli
+          forge settings set usage-analytics false
+          forge settings set default-environment "$FORGE_ENVIRONMENT"
+          forge lint
+
+      - name: Deploy frozen Smart Approval candidate to Forge production
+        run: forge deploy --environment "$FORGE_ENVIRONMENT" --non-interactive
