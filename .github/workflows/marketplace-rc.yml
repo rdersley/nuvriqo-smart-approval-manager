@@ -41,17 +41,14 @@ jobs:
           test -n "$JIRA_TEST_ISSUE_KEY" || (echo "Missing JIRA_TEST_ISSUE_KEY" && exit 1)
           test -n "$JIRA_STORAGE_STATE_GZIP_B64" || (echo "Missing JIRA_STORAGE_STATE_GZIP_B64" && exit 1)
 
-      - name: Install dependencies and security gate
+      - name: Install pinned dependencies and security gate
         shell: bash
         run: |
-          if ! npm ci; then
-            rm -rf node_modules package-lock.json
-            npm install --no-fund
-          fi
+          npm install --no-fund
           npm audit --omit=dev --audit-level=high
           npm install --no-save @playwright/test
 
-      - name: Run code checks
+      - name: Run code and release regression checks
         run: npm test
 
       - name: Install Forge CLI and lint
