@@ -2,7 +2,7 @@ name: Marketplace RC Deploy & UI Test
 
 on:
   push:
-    branches: [release/smart-approval-marketplace-rc]
+    branches: [release/smart-approval-marketplace-rc, release/smart-approval-internal-rc]
   workflow_dispatch:
 
 concurrency:
