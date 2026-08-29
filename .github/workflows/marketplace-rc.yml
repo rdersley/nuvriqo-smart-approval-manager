@@ -5,6 +5,7 @@ on:
     branches: [release/smart-approval-marketplace-rc, release/smart-approval-internal-rc]
   workflow_dispatch:
 
+# Internal RC pushes intentionally deploy to Nuvriqo development for hands-on acceptance testing.
 concurrency:
   group: smart-approval-marketplace-rc
   cancel-in-progress: true
