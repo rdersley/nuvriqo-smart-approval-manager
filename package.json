@@ -13,7 +13,7 @@
     "@forge/api": "latest",
     "@forge/bridge": "latest",
     "@forge/kvs": "latest",
-    "@forge/react": "latest",
+    "@forge/react": "12.1.1",
     "@forge/resolver": "latest",
     "react": "latest"
   }
