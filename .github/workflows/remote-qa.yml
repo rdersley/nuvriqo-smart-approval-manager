@@ -61,11 +61,14 @@ jobs:
 
   deploy-development:
     needs: validate
-    if: github.event_name == 'workflow_dispatch' && inputs.deploy == true
+    if: (github.event_name == 'workflow_dispatch' && inputs.deploy == true) || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     env:
       FORGE_EMAIL: ${{ secrets.FORGE_EMAIL }}
       FORGE_API_TOKEN: ${{ secrets.FORGE_API_TOKEN }}
+      DEPLOY_SITE: ${{ inputs.site || 'nuvriqo.atlassian.net' }}
+      DEPLOY_ENVIRONMENT: ${{ inputs.environment || 'development' }}
+      DEPLOY_PRODUCT: ${{ inputs.product || 'jira' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -86,10 +89,10 @@ jobs:
       - name: Deploy
         run: |
           forge settings set usage-analytics false
-          forge settings set default-environment "${{ inputs.environment }}"
-          forge deploy --environment "${{ inputs.environment }}" --non-interactive
+          forge settings set default-environment "$DEPLOY_ENVIRONMENT"
+          forge deploy --environment "$DEPLOY_ENVIRONMENT" --non-interactive
       - name: Upgrade installation
-        run: forge install --upgrade --site "${{ inputs.site }}" --product "${{ inputs.product }}" --environment "${{ inputs.environment }}" --confirm-scopes --non-interactive
+        run: forge install --upgrade --site "$DEPLOY_SITE" --product "$DEPLOY_PRODUCT" --environment "$DEPLOY_ENVIRONMENT" --confirm-scopes --non-interactive
       - name: Verify TEST project
         env:
           JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
@@ -97,6 +100,6 @@ jobs:
         shell: bash
         run: |
           if [ -z "$JIRA_EMAIL" ] || [ -z "$JIRA_API_TOKEN" ]; then echo "Jira credentials not configured; skipping REST smoke check"; exit 0; fi
-          code=$(curl -sS -o /tmp/project.json -w "%{http_code}" -u "$JIRA_EMAIL:$JIRA_API_TOKEN" "https://${{ inputs.site }}/rest/api/3/project/TEST")
+          code=$(curl -sS -o /tmp/project.json -w "%{http_code}" -u "$JIRA_EMAIL:$JIRA_API_TOKEN" "https://$DEPLOY_SITE/rest/api/3/project/TEST")
           test "$code" = "200" || (cat /tmp/project.json && exit 1)
           echo "TEST project reachable"
