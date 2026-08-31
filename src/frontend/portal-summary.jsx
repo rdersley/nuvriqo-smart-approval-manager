@@ -5,6 +5,7 @@ import { invoke } from '@forge/bridge';
 const PortalSummary = () => {
   const [items, setItems] = useState(null);
   const [reasons, setReasons] = useState({});
+  const [expanded, setExpanded] = useState({});
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
 
@@ -29,6 +30,7 @@ const PortalSummary = () => {
         reason: reasons[approvalId] || '',
       });
       setReasons((current) => ({ ...current, [approvalId]: '' }));
+      setExpanded((current) => ({ ...current, [approvalId]: false }));
       await refresh();
     } catch (e) {
       setError(e.message || String(e));
@@ -53,17 +55,33 @@ const PortalSummary = () => {
       <Heading size="small">Approvals needing your attention</Heading>
       <Lozenge appearance="inprogress">{items.length} waiting</Lozenge>
     </Inline>
-    <Text>Review and decide directly here, or open My Approvals for the full approval history.</Text>
+    <Text>Review and decide directly here. Use Preview details for a little more context before choosing.</Text>
     {error ? <Text>{error}</Text> : null}
 
-    {items.slice(0, 5).map((a) =>
-      <Stack key={a.id} space="space.075">
+    {items.slice(0, 5).map((a) => {
+      const isExpanded = !!expanded[a.id];
+      const requirement = a.groupSize > 1
+        ? (a.approvalMode === 'any' ? `One approval is enough from ${a.groupSize} approvers.` : `All ${a.groupSize} approvers must approve.`)
+        : 'Your decision completes this approval.';
+
+      return <Stack key={a.id} space="space.075">
         <Inline space="space.100" alignBlock="center">
           <Text><Text weight="bold">{a.issueKey}</Text> — {a.summary}</Text>
           <Lozenge appearance="inprogress">Waiting</Lozenge>
         </Inline>
-        <Text>{a.groupSize > 1 ? (a.approvalMode === 'any' ? 'One approver is enough' : `All ${a.groupSize} approvers must approve`) : 'Your decision completes this approval'}</Text>
-        {a.message ? <Text>Approval request: {a.message}</Text> : null}
+        <Text>{requirement}</Text>
+
+        <Button appearance="subtle" onClick={() => setExpanded((current) => ({ ...current, [a.id]: !current[a.id] }))}>
+          {isExpanded ? 'Hide preview' : 'Preview details'}
+        </Button>
+
+        {isExpanded ? <Stack space="space.050">
+          {a.message ? <Text><Text weight="bold">Approval request:</Text> {a.message}</Text> : <Text>No additional approval message was provided.</Text>}
+          {a.ruleName ? <Text><Text weight="bold">Prepared by:</Text> {a.ruleName}</Text> : null}
+          {a.createdAt ? <Text><Text weight="bold">Requested:</Text> {new Date(a.createdAt).toLocaleString()}</Text> : null}
+          <Text><Text weight="bold">Approval requirement:</Text> {requirement}</Text>
+        </Stack> : null}
+
         <TextArea
           value={reasons[a.id] || ''}
           onChange={(e) => setReasons({ ...reasons, [a.id]: e.target.value })}
@@ -73,8 +91,8 @@ const PortalSummary = () => {
           <Button appearance="primary" onClick={() => decide(a.id, 'approved')} isDisabled={busy === a.id}>Approve</Button>
           <Button appearance="danger" onClick={() => decide(a.id, 'declined')} isDisabled={busy === a.id}>Decline</Button>
         </Inline>
-      </Stack>
-    )}
+      </Stack>;
+    })}
 
     {items.length > 5 ? <Text>Plus {items.length - 5} more waiting request{items.length - 5 === 1 ? '' : 's'} in My Approvals.</Text> : null}
     <Text><Text weight="bold">My Approvals</Text> remains available from your profile menu for full details and previous decisions.</Text>
