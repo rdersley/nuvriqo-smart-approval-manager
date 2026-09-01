@@ -1,0 +1,86 @@
+name: Work Site Pilot Install
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_live_site:
+        description: Confirm installation to retailinmotion.atlassian.net
+        required: true
+        type: boolean
+        default: false
+      action:
+        description: Install for first use, or upgrade an existing installation
+        required: true
+        type: choice
+        options:
+          - install
+          - upgrade
+        default: install
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    env:
+      FORGE_EMAIL: ${{ secrets.FORGE_EMAIL }}
+      FORGE_API_TOKEN: ${{ secrets.FORGE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        shell: bash
+        run: |
+          if npm ci; then
+            echo "Installed from lockfile"
+          else
+            echo "Lockfile install failed; regenerating dependencies from package.json"
+            rm -rf node_modules package-lock.json
+            npm install --no-audit --no-fund
+          fi
+      - name: Run tests
+        run: npm test
+      - name: Forge lint
+        shell: bash
+        run: |
+          test -n "$FORGE_EMAIL" || (echo "Missing FORGE_EMAIL" && exit 1)
+          test -n "$FORGE_API_TOKEN" || (echo "Missing FORGE_API_TOKEN" && exit 1)
+          npm install --global @forge/cli
+          forge settings set usage-analytics false
+          forge settings set default-environment development
+          forge lint
+
+  install-work-site:
+    needs: validate
+    if: inputs.confirm_live_site == true
+    runs-on: ubuntu-latest
+    env:
+      FORGE_EMAIL: ${{ secrets.FORGE_EMAIL }}
+      FORGE_API_TOKEN: ${{ secrets.FORGE_API_TOKEN }}
+      TARGET_SITE: retailinmotion.atlassian.net
+      TARGET_PRODUCT: jira
+      TARGET_ENVIRONMENT: development
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check Forge credentials
+        run: |
+          test -n "$FORGE_EMAIL" || (echo "Missing FORGE_EMAIL" && exit 1)
+          test -n "$FORGE_API_TOKEN" || (echo "Missing FORGE_API_TOKEN" && exit 1)
+      - name: Install Forge CLI
+        run: npm install --global @forge/cli
+      - name: Configure Forge environment
+        run: |
+          forge settings set usage-analytics false
+          forge settings set default-environment "$TARGET_ENVIRONMENT"
+      - name: Install current tested development version
+        if: inputs.action == 'install'
+        run: forge install --site "$TARGET_SITE" --product "$TARGET_PRODUCT" --environment "$TARGET_ENVIRONMENT" --confirm-scopes --non-interactive
+      - name: Upgrade existing work-site installation
+        if: inputs.action == 'upgrade'
+        run: forge install --upgrade --site "$TARGET_SITE" --product "$TARGET_PRODUCT" --environment "$TARGET_ENVIRONMENT" --confirm-scopes --non-interactive
