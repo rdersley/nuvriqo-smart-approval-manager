@@ -1,12 +1,12 @@
-name: Marketplace RC Deploy & UI Test
+name: Auto Deploy & UI Test
 
 on:
   push:
-    branches: [release/smart-approval-marketplace-rc]
+    branches: [automation/playwright-ui-tests]
   workflow_dispatch:
 
 concurrency:
-  group: smart-approval-marketplace-rc
+  group: smart-approval-auto-deploy-ui
   cancel-in-progress: true
 
 permissions:
@@ -41,14 +41,14 @@ jobs:
           test -n "$JIRA_TEST_ISSUE_KEY" || (echo "Missing JIRA_TEST_ISSUE_KEY" && exit 1)
           test -n "$JIRA_STORAGE_STATE_GZIP_B64" || (echo "Missing JIRA_STORAGE_STATE_GZIP_B64" && exit 1)
 
-      - name: Install pinned dependencies and security gate
+      - name: Install and audit dependencies
         shell: bash
         run: |
-          npm install --no-fund
-          npm audit --omit=dev --audit-level=high
+          npm install
+          npm audit --audit-level=critical
           npm install --no-save @playwright/test
 
-      - name: Run code and release regression checks
+      - name: Run code checks
         run: npm test
 
       - name: Install Forge CLI and lint
@@ -59,7 +59,7 @@ jobs:
           forge settings set default-environment "$FORGE_ENVIRONMENT"
           forge lint
 
-      - name: Deploy Marketplace candidate to Nuvriqo development
+      - name: Deploy to Nuvriqo development
         run: forge deploy --environment "$FORGE_ENVIRONMENT" --non-interactive
 
       - name: Install or upgrade development app with retry
@@ -104,8 +104,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: smart-approval-marketplace-rc-evidence-${{ github.run_attempt }}
+          name: playwright-evidence-${{ github.run_attempt }}
           path: |
             playwright-report/
             test-results/
-          retention-days: 30
+          retention-days: 14

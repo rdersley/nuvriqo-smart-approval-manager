@@ -96,24 +96,35 @@ const AgentPanel = () => {
     return `${approved} approved · ${declined} declined · ${pending} waiting · ${approval.approvalMode === 'any' ? 'any one can approve' : 'all must approve'}`;
   };
 
-  return <Stack space="space.250">
-    <Stack space="space.050">
-      <Heading size="medium">Smart Approval</Heading>
-      <Text>Request customer sign-off without leaving the Jira ticket.</Text>
+  const pendingCount = approvals.filter((a) => a.status === 'pending').length;
+
+  return <Stack space="space.300">
+    <Stack space="space.100">
+      <Inline space="space.100" alignBlock="center">
+        <Heading size="medium">Smart Approval Manager</Heading>
+        {pendingCount ? <Lozenge appearance="inprogress">{pendingCount} waiting</Lozenge> : <Lozenge appearance="success">Ready</Lozenge>}
+      </Inline>
+      <Text>Prepare, send and track customer approvals directly from this Jira request.</Text>
     </Stack>
     {error ? <Text>{error}</Text> : null}
 
-    <Stack space="space.100">
-      <Heading size="small">Request approval</Heading>
+    <Stack space="space.150">
+      <Heading size="small">1. Choose who should approve</Heading>
       {preparedRule ? <Stack space="space.050">
-        <Lozenge appearance="inprogress">Prepared by rule</Lozenge>
-        <Text><Text weight="bold">{preparedRule.ruleName || 'Approval rule'}</Text> matched this ticket. Approvers have been preselected for you to review before sending.</Text>
-      </Stack> : null}
+        <Inline space="space.100" alignBlock="center">
+          <Lozenge appearance="inprogress">Rule matched</Lozenge>
+          <Lozenge appearance="moved">Agent review required</Lozenge>
+        </Inline>
+        <Text><Text weight="bold">{preparedRule.ruleName || 'Approval rule'}</Text> matched this ticket and prepared the approvers below.</Text>
+        <Text>Review the approvers and message before sending. Nothing has been sent to the customer yet.</Text>
+      </Stack> : <Text>No rule has prepared approvers for this request. You can select them manually.</Text>}
+
       <Label labelFor="approver-search">Find approvers</Label>
       <Inline space="space.100" alignBlock="center">
-        <Textfield id="approver-search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search name or email" />
+        <Textfield id="approver-search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by name or email" />
         <Button onClick={search} isDisabled={query.trim().length < 2 || busy}>Search</Button>
       </Inline>
+
       {availableOptions.length ? <Select
         label="Selected approvers"
         isMulti
@@ -123,32 +134,45 @@ const AgentPanel = () => {
         placeholder="Choose one or more approvers"
       /> : null}
       {(selected || []).length > 1 ? <Select label="Approval requirement" options={modeOptions} value={approvalMode} onChange={setApprovalMode} /> : null}
-      {(selected || []).length ? <Text>{selected.length} approver{selected.length === 1 ? '' : 's'} selected.</Text> : null}
-      <Label labelFor="approval-message">Message to approvers (optional)</Label>
-      <TextArea id="approval-message" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Explain what needs to be approved" />
-      <Button appearance="primary" onClick={requestApproval} isDisabled={(selected || []).length === 0 || busy}>Request approval</Button>
-      {preparedRule ? <Text>Nothing is sent to the customer until you click Request approval.</Text> : null}
+      {(selected || []).length ? <Text><Text weight="bold">{selected.length}</Text> approver{selected.length === 1 ? '' : 's'} selected.</Text> : null}
     </Stack>
 
-    <Heading size="small">Approval activity</Heading>
-    {loading ? <Spinner /> : approvals.length === 0 ? <Text>No approvals have been requested for this ticket yet.</Text> : approvals.map((a) =>
-      <Stack key={a.id} space="space.050">
-        <Inline space="space.100" alignBlock="center">
-          <Text><Text weight="bold">{a.approver.displayName}</Text></Text>
-          <Lozenge appearance={a.status === 'approved' ? 'success' : a.status === 'declined' ? 'removed' : a.status === 'pending' ? 'inprogress' : 'default'}>{a.status}</Lozenge>
-        </Inline>
-        <Text>Requested {new Date(a.createdAt).toLocaleString()} · Reminders {a.reminderCount || 0}</Text>
-        {groupProgress(a) ? <Text>{groupProgress(a)}</Text> : null}
-        {a.source === 'rule-assisted' && a.ruleName ? <Text>Prepared by rule: {a.ruleName} · sent by agent</Text> : a.source === 'manual' ? <Text>Requested manually</Text> : null}
-        {a.message ? <Text>Request message: {a.message}</Text> : null}
-        {a.decisionReason ? <Text>Decision comment: {a.decisionReason}</Text> : null}
-        {a.transitionError ? <Text>Workflow action needs attention: {a.transitionError}</Text> : null}
-        {a.status === 'pending' ? <Inline space="space.100">
-          <Button onClick={() => act('sendReminder', a.id)} isDisabled={busy}>Send reminder</Button>
-          <Button appearance="subtle" onClick={() => act('cancelApproval', a.id)} isDisabled={busy}>Cancel approval</Button>
-        </Inline> : null}
-      </Stack>
-    )}
+    <Stack space="space.150">
+      <Heading size="small">2. Add the approval message</Heading>
+      <Label labelFor="approval-message">Message to approvers (optional)</Label>
+      <TextArea id="approval-message" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Explain what the customer is being asked to approve" />
+    </Stack>
+
+    <Stack space="space.100">
+      <Heading size="small">3. Send for approval</Heading>
+      <Text>The customer will only be notified after you send the request.</Text>
+      <Button appearance="primary" onClick={requestApproval} isDisabled={(selected || []).length === 0 || busy}>Send approval request</Button>
+    </Stack>
+
+    <Stack space="space.150">
+      <Inline spread="space-between" alignBlock="center">
+        <Heading size="small">Approval activity</Heading>
+        {approvals.length ? <Lozenge appearance="default">{approvals.length} total</Lozenge> : null}
+      </Inline>
+      {loading ? <Spinner /> : approvals.length === 0 ? <Text>No approvals have been sent for this ticket yet.</Text> : approvals.map((a) =>
+        <Stack key={a.id} space="space.050">
+          <Inline space="space.100" alignBlock="center">
+            <Text><Text weight="bold">{a.approver.displayName}</Text></Text>
+            <Lozenge appearance={a.status === 'approved' ? 'success' : a.status === 'declined' ? 'removed' : a.status === 'pending' ? 'inprogress' : 'default'}>{a.status === 'approved' ? 'Approved' : a.status === 'declined' ? 'Declined' : a.status === 'pending' ? 'Waiting' : a.status}</Lozenge>
+          </Inline>
+          <Text>Requested {new Date(a.createdAt).toLocaleString()} · Reminders sent: {a.reminderCount || 0}</Text>
+          {groupProgress(a) ? <Text>{groupProgress(a)}</Text> : null}
+          {a.source === 'rule-assisted' && a.ruleName ? <Text>Prepared by rule: {a.ruleName} · sent by agent</Text> : a.source === 'manual' ? <Text>Selected manually by the agent</Text> : null}
+          {a.message ? <Text><Text weight="bold">Request message:</Text> {a.message}</Text> : null}
+          {a.decisionReason ? <Text><Text weight="bold">Decision comment:</Text> {a.decisionReason}</Text> : null}
+          {a.transitionError ? <Text>Workflow action needs attention: {a.transitionError}</Text> : null}
+          {a.status === 'pending' ? <Inline space="space.100">
+            <Button onClick={() => act('sendReminder', a.id)} isDisabled={busy}>Send reminder</Button>
+            <Button appearance="subtle" onClick={() => act('cancelApproval', a.id)} isDisabled={busy}>Cancel approval</Button>
+          </Inline> : null}
+        </Stack>
+      )}
+    </Stack>
   </Stack>;
 };
 

@@ -10,11 +10,11 @@
     "test": "node --check src/backend/index.js && node --check src/backend/portal.js && node --check src/backend/config.js && node --check src/backend/automation.js && node --check src/backend/reminders.js && node --check src/backend/users.js && node --test test/*.test.mjs"
   },
   "dependencies": {
-    "@forge/api": "8.0.4",
-    "@forge/bridge": "6.3.0",
-    "@forge/kvs": "2.0.4",
-    "@forge/react": "12.1.2",
-    "@forge/resolver": "2.0.0",
-    "react": "18.3.1"
+    "@forge/api": "latest",
+    "@forge/bridge": "latest",
+    "@forge/kvs": "latest",
+    "@forge/react": "12.1.1",
+    "@forge/resolver": "latest",
+    "react": "latest"
   }
 }

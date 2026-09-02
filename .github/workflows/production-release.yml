@@ -50,5 +50,5 @@ jobs:
           forge settings set default-environment "$FORGE_ENVIRONMENT"
           forge lint
 
-      - name: Deploy frozen Smart Approval candidate to Forge production
+      - name: Deploy Smart Approval release to Forge production
         run: forge deploy --environment "$FORGE_ENVIRONMENT" --non-interactive
