@@ -13,15 +13,27 @@ async function json(response) {
 
 function values(value) {
   if (value == null) return [];
-  if (Array.isArray(value)) return value.flatMap(values);
-  if (typeof value === 'object') return [value.value, value.name, value.id, value.key, value.displayName].filter((v) => v != null).map(String);
+  if (Array.isArray(value)) return [...new Set(value.flatMap(values))];
+  if (typeof value === 'object') {
+    const out = [];
+    for (const key of ['value', 'name', 'id', 'key', 'displayName']) {
+      const candidate = value?.[key];
+      if (candidate == null) continue;
+      if (typeof candidate === 'object') out.push(...values(candidate));
+      else out.push(String(candidate));
+    }
+    // Cascading/select fields can hold their displayed value inside parent/child objects.
+    if (value?.parent != null) out.push(...values(value.parent));
+    if (value?.child != null) out.push(...values(value.child));
+    return [...new Set(out)];
+  }
   return [String(value)];
 }
 
 function conditionMatches(issue, condition) {
   const fieldId = clean(condition?.fieldId, 200);
   if (!fieldId) return false;
-  const actual = values(issue.fields?.[fieldId]).map((v) => v.toLowerCase());
+  const actual = values(issue.fields?.[fieldId]).map((v) => clean(v, 1000).toLowerCase());
   const expected = clean(condition?.value, 1000).toLowerCase();
   const operator = condition?.operator || 'equals';
   if (operator === 'isEmpty') return actual.length === 0 || actual.every((v) => !v);
@@ -59,20 +71,16 @@ export async function run(event) {
     return;
   }
 
+  // Rule configuration already stores stable Atlassian account IDs. Do not require an
+  // additional Jira user lookup just to prepare the agent form: portal-only JSM customers
+  // can be valid approvers even when the Jira user endpoint cannot resolve them here.
   const approvers = [];
   const seen = new Set();
   for (const configured of (Array.isArray(rule.approvers) ? rule.approvers : []).slice(0, 20)) {
     const accountId = clean(configured?.accountId, 200);
     if (!accountId || accountId === 'unknown' || seen.has(accountId)) continue;
     seen.add(accountId);
-    try {
-      const canonical = await json(await api.asApp().requestJira(route`/rest/api/3/user?accountId=${accountId}`));
-      if (canonical?.accountId && canonical.active !== false) {
-        approvers.push({ accountId: canonical.accountId });
-      }
-    } catch (error) {
-      console.warn('Smart Approval: unable to resolve suggested approver', error?.message || error);
-    }
+    approvers.push({ accountId });
   }
 
   if (!approvers.length) {
