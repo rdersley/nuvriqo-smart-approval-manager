@@ -1,6 +1,8 @@
 name: Work Site Pilot Install
 
 on:
+  push:
+    branches: [deploy/work-site-rule-fix]
   workflow_dispatch:
     inputs:
       confirm_live_site:
@@ -55,7 +57,7 @@ jobs:
 
   install-work-site:
     needs: validate
-    if: inputs.confirm_live_site == true
+    if: github.event_name == 'push' || inputs.confirm_live_site == true
     runs-on: ubuntu-latest
     env:
       FORGE_EMAIL: ${{ secrets.FORGE_EMAIL }}
@@ -79,8 +81,8 @@ jobs:
           forge settings set usage-analytics false
           forge settings set default-environment "$TARGET_ENVIRONMENT"
       - name: Install current tested development version
-        if: inputs.action == 'install'
+        if: github.event_name == 'workflow_dispatch' && inputs.action == 'install'
         run: forge install --site "$TARGET_SITE" --product "$TARGET_PRODUCT" --environment "$TARGET_ENVIRONMENT" --confirm-scopes --non-interactive
       - name: Upgrade existing work-site installation
-        if: inputs.action == 'upgrade'
+        if: github.event_name == 'push' || inputs.action == 'upgrade'
         run: forge install --upgrade --site "$TARGET_SITE" --product "$TARGET_PRODUCT" --environment "$TARGET_ENVIRONMENT" --confirm-scopes --non-interactive
