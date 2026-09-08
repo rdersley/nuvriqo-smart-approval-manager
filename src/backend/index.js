@@ -2,6 +2,7 @@ import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
 import { enrichApproval, resolveDisplayName, stripStoredDisplayName } from './users.js';
+import { run as prepareRuleSuggestion } from './automation.js';
 
 const resolver = new Resolver();
 const nowIso = () => new Date().toISOString();
@@ -105,8 +106,23 @@ resolver.define('getApprovalDefaults', async ({ payload }) => {
   const issueKey = clean(payload?.issueKey, 100);
   if (!issueKey) return { defaultApprovalMode: 'all', reminderHours: 24, suggestion: null };
   const issue = await getIssueAsUser(issueKey);
-  const settings = (await kvs.get(configKey(String(issue.fields.project.id)))) || {};
-  const suggestion = await kvs.get(suggestionKey(issueKey));
+  const projectId = String(issue.fields.project.id);
+  const settings = (await kvs.get(configKey(projectId))) || {};
+  let suggestion = await kvs.get(suggestionKey(issueKey));
+
+  // A rule may have been created or changed after a ticket was already sitting in
+  // its configured trigger status. Re-evaluate the current ticket when the agent
+  // opens the panel so matching approvers are prepared without requiring another
+  // Jira field/status change. The automation worker still only prepares; it never sends.
+  if (!suggestion && Array.isArray(settings.autoRules) && settings.autoRules.length > 0) {
+    try {
+      await prepareRuleSuggestion({ issue: { key: issueKey, fields: { project: { id: projectId } } } });
+      suggestion = await kvs.get(suggestionKey(issueKey));
+    } catch (error) {
+      console.warn('Smart Approval: unable to refresh rule suggestion on panel load', error?.message || error);
+    }
+  }
+
   let enrichedSuggestion = null;
   if (suggestion) {
     enrichedSuggestion = {
