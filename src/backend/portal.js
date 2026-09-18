@@ -2,6 +2,7 @@ import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
 import { enrichApproval, resolveDisplayName, stripStoredDisplayName } from './users.js';
+import { publishPortalPlusApprovalSnapshot } from './portal-plus-publisher.js';
 
 const resolver = new Resolver();
 const approvalKey = (id) => `approval#${id}`;
@@ -28,6 +29,13 @@ async function queryPrefix(prefix, max = 200) {
     cursor = page?.nextCursor;
   } while (cursor && out.length < max);
   return out.slice(0, max);
+}
+
+async function publishIssueSnapshot(issueKey) {
+  const rows = await queryPrefix(`issue#${issueKey}#`, 200);
+  const records = rows.map((r) => r.value);
+  try { return await publishPortalPlusApprovalSnapshot({ issueKey, records }); }
+  catch (error) { console.warn('Unable to publish Portal+ approval snapshot', error?.message || error); return null; }
 }
 
 async function saveApproval(record) {
@@ -167,6 +175,7 @@ resolver.define('decideApproval', async ({ payload, context }) => {
       ? `Approval complete. ${mode === 'all' && records.length > 1 ? 'All required approvers have approved.' : 'The required approval has been granted.'}`
       : `Approval declined. ${mode === 'all' && records.length > 1 ? 'A required approver declined the request.' : 'The approval requirement was not met.'}`);
   }
+  await publishIssueSnapshot(record.issueKey);
   return enrichApproval(record);
 });
 
