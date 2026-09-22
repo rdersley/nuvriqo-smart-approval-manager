@@ -52,3 +52,19 @@ test('form audit write-back is optional and failures do not undo approval', () =
   assert.match(formsSource, /reason: 'not-configured'/);
   assert.match(portalSource, /form-audit-write-failed/);
 });
+
+
+test('form snapshots expose only explicitly selected answers', () => {
+  assert.match(indexSource, /allowedKeys && allowedKeys\.size > 0/);
+  assert.doesNotMatch(indexSource, /allowedKeys\.size === 0 \|\| allowedKeys\.has/);
+});
+
+test('Forms API errors do not include response bodies', () => {
+  assert.match(formsSource, /Forms API request failed with status/);
+  assert.doesNotMatch(formsSource, /throw new Error\(body \|\| \('Forms API error/);
+});
+
+test('complex Forms answers are normalized for approval display', () => {
+  assert.match(formsSource, /function normalizeAnswer/);
+  assert.match(formsSource, /Array\.isArray\(value\)/);
+});
