@@ -20,6 +20,7 @@ const AgentPanel = () => {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [formStatus, setFormStatus] = useState(null);
 
   const refresh = async () => {
     if (!issueKey) return;
@@ -37,6 +38,8 @@ const AgentPanel = () => {
         setApprovalMode(suggestion.approvalMode === 'any' ? modeOptions[1] : modeOptions[0]);
         setMessage(suggestion.message || '');
         setPreparedRule(suggestion);
+        if (suggestion?.formEnabled) setFormStatus(await invoke('getApprovalFormStatus', { issueKey }));
+        else setFormStatus(null);
       } else if ((selected || []).length === 0) {
         setApprovalMode(defaults?.defaultApprovalMode === 'any' ? modeOptions[1] : modeOptions[0]);
         setPreparedRule(null);
@@ -57,6 +60,16 @@ const AgentPanel = () => {
         setSelected((current) => current.some((x) => x.value === option.value) ? current : [...current, option]);
       }
     } catch (e) { setError(e.message || String(e)); }
+  };
+
+
+  const sendForm = async () => {
+    setBusy(true); setError('');
+    try {
+      await invoke('sendApprovalFormToCustomer', { issueKey });
+      setFormStatus(await invoke('getApprovalFormStatus', { issueKey }));
+    } catch (e) { setError(e.message || String(e)); }
+    finally { setBusy(false); }
   };
 
   const requestApproval = async () => {
@@ -137,6 +150,21 @@ const AgentPanel = () => {
       {(selected || []).length ? <Text><Text weight="bold">{selected.length}</Text> approver{selected.length === 1 ? '' : 's'} selected.</Text> : null}
     </Stack>
 
+
+      {preparedRule?.formEnabled ? <Stack space="space.100">
+        <Heading size="small">Required customer form</Heading>
+        {!formStatus?.attached ? <>
+          <Text>This approval rule requires a JSM Form. Attach it to this request only and make it available to this customer in the portal.</Text>
+          <Button onClick={sendForm} isDisabled={busy}>Send form to customer</Button>
+        </> : formStatus?.submitted ? <>
+          <Lozenge appearance="success">Form submitted</Lozenge>
+          <Text>{formStatus?.name || 'Required form'} has been submitted and is ready to include with the approval.</Text>
+        </> : <>
+          <Lozenge appearance="inprogress">Waiting for customer</Lozenge>
+          <Text>{formStatus?.name || 'Required form'} is attached to this request and visible in the customer portal.</Text>
+        </>}
+      </Stack> : null}
+
     <Stack space="space.150">
       <Heading size="small">2. Add the approval message</Heading>
       <Label labelFor="approval-message">Message to approvers (optional)</Label>
@@ -146,7 +174,7 @@ const AgentPanel = () => {
     <Stack space="space.100">
       <Heading size="small">3. Send for approval</Heading>
       <Text>The customer will only be notified after you send the request.</Text>
-      <Button appearance="primary" onClick={requestApproval} isDisabled={(selected || []).length === 0 || busy}>Send approval request</Button>
+      <Button appearance="primary" onClick={requestApproval} isDisabled={(selected || []).length === 0 || busy || (preparedRule?.formEnabled && !formStatus?.submitted)}>Send approval request</Button>
     </Stack>
 
     <Stack space="space.150">
