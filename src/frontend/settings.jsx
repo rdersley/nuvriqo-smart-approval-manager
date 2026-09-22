@@ -324,7 +324,7 @@ const Settings = () => {
                   />
                 )}
               </Stack> : null}
-              <Text>Only selected submitted answers are copied into the approval snapshot. If no fields are selected, all submitted answers are included.</Text>
+              <Text>Only explicitly selected submitted answers are copied into the approval snapshot. If no fields are selected, no form answers are exposed to approvers.</Text>
               {rule.formId && (formFields[rule.formId] || []).length > 0 ? <Stack space="space.075">
                 <Heading size="xsmall">Write approval result onto the form</Heading>
                 <Text>Optionally map dedicated form questions for the electronic approval record.</Text>
