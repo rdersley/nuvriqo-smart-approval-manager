@@ -6,6 +6,7 @@ const agent = await readFile(new URL('../src/backend/index.js', import.meta.url)
 const config = await readFile(new URL('../src/backend/config.js', import.meta.url), 'utf8');
 const portal = await readFile(new URL('../src/frontend/portal-approvals.jsx', import.meta.url), 'utf8');
 const forms = await readFile(new URL('../src/backend/forms.js', import.meta.url), 'utf8');
+const portalBackend = await readFile(new URL('../src/backend/portal.js', import.meta.url), 'utf8');
 
 test('forms are optional and only captured for a form-enabled prepared rule', () => {
   assert.ok(agent.includes("prepared?.formEnabled === true"));
@@ -34,37 +35,37 @@ test('forms client reads issue forms and simplified answers read-only', () => {
   assert.ok(forms.includes("method: 'GET'"));
   assert.ok(forms.includes("/format/answers"));
   assert.ok(!forms.includes("method: 'POST'"));
-  assert.ok(!forms.includes("method: 'PUT'"));
+  assert.ok(forms.includes("method: 'PUT'"));
 });
 
 
 test('approval decisions can be written back to configured JSM Form audit fields', () => {
-  assert.match(formsSource, /writeApprovalAuditToForm/);
-  assert.match(formsSource, /approvedByFieldKey/);
-  assert.match(formsSource, /approvedAtFieldKey/);
-  assert.match(formsSource, /decisionFieldKey/);
-  assert.match(formsSource, /decisionCommentFieldKey/);
-  assert.match(portalSource, /form-audit-written/);
-  assert.match(portalSource, /writeApprovalAuditToForm/);
+  assert.match(forms, /writeApprovalAuditToForm/);
+  assert.match(forms, /approvedByFieldKey/);
+  assert.match(forms, /approvedAtFieldKey/);
+  assert.match(forms, /decisionFieldKey/);
+  assert.match(forms, /decisionCommentFieldKey/);
+  assert.match(portalBackend, /form-audit-written/);
+  assert.match(portalBackend, /writeApprovalAuditToForm/);
 });
 
 test('form audit write-back is optional and failures do not undo approval', () => {
-  assert.match(formsSource, /reason: 'not-configured'/);
-  assert.match(portalSource, /form-audit-write-failed/);
+  assert.match(forms, /reason: 'not-configured'/);
+  assert.match(portalBackend, /form-audit-write-failed/);
 });
 
 
 test('form snapshots expose only explicitly selected answers', () => {
-  assert.match(indexSource, /allowedKeys && allowedKeys\.size > 0/);
-  assert.doesNotMatch(indexSource, /allowedKeys\.size === 0 \|\| allowedKeys\.has/);
+  assert.match(agent, /allowedKeys && allowedKeys\.size > 0/);
+  assert.doesNotMatch(agent, /allowedKeys\.size === 0 \|\| allowedKeys\.has/);
 });
 
 test('Forms API errors do not include response bodies', () => {
-  assert.match(formsSource, /Forms API request failed with status/);
-  assert.doesNotMatch(formsSource, /throw new Error\(body \|\| \('Forms API error/);
+  assert.match(forms, /Forms API request failed with status/);
+  assert.doesNotMatch(forms, /throw new Error\(body \|\| \('Forms API error/);
 });
 
 test('complex Forms answers are normalized for approval display', () => {
-  assert.match(formsSource, /function normalizeAnswer/);
-  assert.match(formsSource, /Array\.isArray\(value\)/);
+  assert.match(forms, /function normalizeAnswer/);
+  assert.match(forms, /Array\.isArray\(value\)/);
 });
