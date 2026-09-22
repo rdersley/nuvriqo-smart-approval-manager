@@ -176,7 +176,7 @@ resolver.define('createApproval', async ({ payload, context }) => {
   let formSnapshot = null;
   try {
     const cloudId = clean(context?.cloudId, 200);
-    if (cloudId) {
+    if (cloudId && prepared?.formEnabled === true) {
       const preview = await getFormPreview(cloudId, issueKey, prepared?.formId || '');
       if (preview?.submitted && Array.isArray(preview.answers)) {
         const allowedKeys = Array.isArray(prepared?.formFieldKeys) ? new Set(prepared.formFieldKeys.map((x) => clean(x, 300))) : null;
