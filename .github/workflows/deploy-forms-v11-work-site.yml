@@ -1,0 +1,42 @@
+name: Deploy Forms V1.1 Work Site Test
+
+on:
+  push:
+    branches:
+      - feature/jsm-forms-integration
+    paths:
+      - .github/workflows/deploy-forms-v11-work-site.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-work-site-test:
+    runs-on: ubuntu-latest
+    env:
+      FORGE_EMAIL: ${{ secrets.FORGE_EMAIL }}
+      FORGE_API_TOKEN: ${{ secrets.FORGE_API_TOKEN }}
+      TARGET_SITE: retailinmotion.atlassian.net
+      TARGET_PRODUCT: jira
+      TARGET_ENVIRONMENT: development
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm ci
+      - name: Run tests
+        run: npm test
+      - name: Install Forge CLI
+        run: npm install --global @forge/cli
+      - name: Forge lint
+        run: |
+          forge settings set usage-analytics false
+          forge settings set default-environment "$TARGET_ENVIRONMENT"
+          forge lint
+      - name: Deploy V1.1 to Forge development
+        run: forge deploy --environment "$TARGET_ENVIRONMENT" --non-interactive
+      - name: Upgrade RetailinMotion development installation
+        run: forge install --upgrade --site "$TARGET_SITE" --product "$TARGET_PRODUCT" --environment "$TARGET_ENVIRONMENT" --confirm-scopes --non-interactive
