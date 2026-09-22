@@ -2,6 +2,7 @@ import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 import { kvs } from '@forge/kvs';
 import { resolveDisplayName } from './users.js';
+import { listProjectForms, getProjectForm, projectFormFields } from './forms.js';
 
 const resolver = new Resolver();
 const configKey = (projectId) => `config#${projectId}`;
@@ -131,6 +132,28 @@ resolver.define('getRuleBuilderMetadata', async ({ payload }) => {
       status: [...statusMap.values()].sort((a, b) => a.label.localeCompare(b.label)),
     },
   };
+});
+
+resolver.define('getProjectForms', async ({ payload }) => {
+  const projectId = clean(payload?.projectId, 100);
+  if (!projectId) throw new Error('Project context is required.');
+  await assertProjectAdmin(projectId);
+  const forms = await listProjectForms(projectId);
+  return forms.map((form) => ({
+    id: clean(form?.id, 300),
+    name: clean(form?.name || 'Untitled form', 500),
+    portalRequestTypeIds: Array.isArray(form?.portalRequestTypeIds) ? form.portalRequestTypeIds : [],
+    updated: clean(form?.updated, 100),
+  })).filter((form) => form.id);
+});
+
+resolver.define('getProjectFormFields', async ({ payload }) => {
+  const projectId = clean(payload?.projectId, 100);
+  const formId = clean(payload?.formId, 300);
+  if (!projectId || !formId) return [];
+  await assertProjectAdmin(projectId);
+  const template = await getProjectForm(projectId, formId);
+  return projectFormFields(template);
 });
 
 resolver.define('getRuleFieldOptions', async ({ payload }) => {
