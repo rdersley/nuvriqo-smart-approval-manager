@@ -80,6 +80,38 @@ export function projectFormFields(template) {
 }
 
 
+export async function attachProjectFormToIssue(issueKey, formTemplateId) {
+  if (!issueKey || !formTemplateId) throw new Error('Issue and form template are required.');
+  const response = await api.asApp().requestJira(route`/forms/issue/${issueKey}/form`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ formTemplate: { id: clean(formTemplateId, 300) } }),
+  });
+  return readJson(response);
+}
+
+export async function makeIssueFormExternal(issueKey, formInstanceId) {
+  if (!issueKey || !formInstanceId) throw new Error('Issue and form instance are required.');
+  const response = await api.asApp().requestJira(route`/forms/issue/${issueKey}/form/${formInstanceId}/action/external`, {
+    method: 'PUT',
+    headers: { Accept: 'application/json' },
+  });
+  return readJson(response);
+}
+
+export async function attachExternalFormToIssue(issueKey, formTemplateId) {
+  const attached = await attachProjectFormToIssue(issueKey, formTemplateId);
+  const instanceId = clean(attached?.id, 300);
+  if (!instanceId) throw new Error('JSM Forms did not return a form instance.');
+  await makeIssueFormExternal(issueKey, instanceId);
+  return {
+    formId: clean(attached?.formTemplate?.id || formTemplateId, 300),
+    instanceId,
+    name: clean(attached?.name || 'JSM Form', 500),
+    submitted: attached?.submitted === true,
+  };
+}
+
 export async function getIssueForm(issueKey, formInstanceId) {
   if (!issueKey || !formInstanceId) return null;
   return requestForms(route`/forms/issue/${issueKey}/form/${formInstanceId}`);
