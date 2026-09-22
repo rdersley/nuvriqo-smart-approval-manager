@@ -183,7 +183,7 @@ resolver.define('createApproval', async ({ payload, context }) => {
           .filter((row) => !allowedKeys || allowedKeys.size === 0 || allowedKeys.has(clean(row.fieldKey, 300)))
           .slice(0, 50)
           .map((row) => ({ fieldKey: clean(row.fieldKey, 300), label: clean(row.label, 500), answer: clean(row.answer, 4000) }));
-        formSnapshot = { formId: clean(preview.formId, 300), name: clean(preview.name, 500), capturedAt: nowIso(), answers };
+        formSnapshot = { formId: clean(preview.formId, 300), instanceId: clean(preview.instanceId, 300), name: clean(preview.name, 500), capturedAt: nowIso(), answers };
       }
     }
   } catch (error) {
