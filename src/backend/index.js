@@ -175,9 +175,8 @@ resolver.define('createApproval', async ({ payload, context }) => {
   // Forms remain optional and a Forms API failure must never block legacy approvals.
   let formSnapshot = null;
   try {
-    const cloudId = clean(context?.cloudId, 200);
-    if (cloudId && prepared?.formEnabled === true) {
-      const preview = await getFormPreview(cloudId, issueKey, prepared?.formId || '');
+    if (prepared?.formEnabled === true) {
+      const preview = await getFormPreview(issueKey, prepared?.formId || '');
       if (preview?.submitted && Array.isArray(preview.answers)) {
         const allowedKeys = Array.isArray(prepared?.formFieldKeys) ? new Set(prepared.formFieldKeys.map((x) => clean(x, 300))) : null;
         const answers = preview.answers
