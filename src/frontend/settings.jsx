@@ -325,6 +325,25 @@ const Settings = () => {
                 )}
               </Stack> : null}
               <Text>Only selected submitted answers are copied into the approval snapshot. If no fields are selected, all submitted answers are included.</Text>
+              {rule.formId && (formFields[rule.formId] || []).length > 0 ? <Stack space="space.075">
+                <Heading size="xsmall">Write approval result onto the form</Heading>
+                <Text>Optionally map dedicated form questions for the electronic approval record.</Text>
+                {[
+                  ['approvedByFieldKey', 'Approved by'],
+                  ['approvedAtFieldKey', 'Date approved'],
+                  ['decisionFieldKey', 'Decision'],
+                  ['decisionCommentFieldKey', 'Approval comment'],
+                ].map(([property, label]) => <Stack key={property} space="space.050">
+                  <Label labelFor={`${property}-${ruleIndex}`}>{label}</Label>
+                  <Select
+                    inputId={`${property}-${ruleIndex}`}
+                    options={(formFields[rule.formId] || []).map((field) => ({ label: field.label, value: field.key }))}
+                    value={rule[property] ? { label: (formFields[rule.formId] || []).find((field) => field.key === rule[property])?.label || rule[property], value: rule[property] } : null}
+                    placeholder="Do not write this value to the form"
+                    onChange={(v) => updateRule(ruleIndex, { [property]: v?.value || '' })}
+                  />
+                </Stack>)}
+              </Stack> : null}
             </Stack> : null}
 
             <Heading size="small">Approval request</Heading>
