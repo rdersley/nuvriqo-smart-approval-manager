@@ -67,3 +67,38 @@ export function projectFormFields(template) {
     label: clean(question?.label || question?.question || question?.name || key, 500),
   })).filter((row) => row.key && row.label);
 }
+
+
+export async function getIssueForm(issueKey, formInstanceId) {
+  if (!issueKey || !formInstanceId) return null;
+  return requestForms(route`/forms/issue/${issueKey}/form/${formInstanceId}`);
+}
+
+export async function saveIssueFormAnswers(issueKey, formInstanceId, answers) {
+  if (!issueKey || !formInstanceId || !answers || typeof answers !== 'object') return null;
+  const response = await api.asApp().requestJira(route`/forms/issue/${issueKey}/form/${formInstanceId}`, {
+    method: 'PUT',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ answers }),
+  });
+  return readJson(response);
+}
+
+export async function writeApprovalAuditToForm(issueKey, formInstanceId, fieldMap, audit) {
+  const approvedByKey = clean(fieldMap?.approvedByFieldKey, 300);
+  const approvedAtKey = clean(fieldMap?.approvedAtFieldKey, 300);
+  const decisionKey = clean(fieldMap?.decisionFieldKey, 300);
+  const commentKey = clean(fieldMap?.decisionCommentFieldKey, 300);
+  const configured = [approvedByKey, approvedAtKey, decisionKey, commentKey].filter(Boolean);
+  if (!configured.length) return { written: false, reason: 'not-configured' };
+
+  const form = await getIssueForm(issueKey, formInstanceId);
+  const current = form?.state?.answers && typeof form.state.answers === 'object' ? form.state.answers : {};
+  const answers = { ...current };
+  if (approvedByKey) answers[approvedByKey] = { text: clean(audit?.approverName, 500) };
+  if (approvedAtKey) answers[approvedAtKey] = { text: clean(audit?.decidedAt, 100) };
+  if (decisionKey) answers[decisionKey] = { text: clean(audit?.decision, 100) };
+  if (commentKey) answers[commentKey] = { text: clean(audit?.comment, 2000) };
+  await saveIssueFormAnswers(issueKey, formInstanceId, answers);
+  return { written: true };
+}
