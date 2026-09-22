@@ -31,10 +31,11 @@ test('portal renders captured form answers rather than refetching mutable form d
   assert.ok(!portal.includes("getFormPreview"));
 });
 
-test('forms client reads issue forms and simplified answers read-only', () => {
+test('forms client reads issue forms and supports controlled attach/write operations', () => {
   assert.ok(forms.includes("method: 'GET'"));
   assert.ok(forms.includes("/format/answers"));
-  assert.ok(!forms.includes("method: 'POST'"));
+  assert.ok(forms.includes("method: 'POST'"));
+  assert.ok(forms.includes('/action/external'));
   assert.ok(forms.includes("method: 'PUT'"));
 });
 
