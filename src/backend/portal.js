@@ -2,6 +2,7 @@ import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
 import { enrichApproval, resolveDisplayName, stripStoredDisplayName } from './users.js';
+import { writeApprovalAuditToForm } from './forms.js';
 
 const resolver = new Resolver();
 const approvalKey = (id) => `approval#${id}`;
@@ -131,6 +132,27 @@ resolver.define('decideApproval', async ({ payload, context }) => {
   await saveApproval(record);
   const approverName = await resolveDisplayName(record.approver.accountId);
   await addPublicComment(record.issueKey, `${approverName} ${decision === 'approved' ? 'approved' : 'declined'} this request${reason ? `: ${reason}` : '.'}`);
+
+  // Where the rule maps dedicated audit questions, write the decision back onto
+  // the same JSM Form instance. This is best-effort: the approval decision remains
+  // authoritative even if Jira Forms rejects an update (for example a locked form).
+  if (record.formSnapshot?.instanceId && record.formSnapshot?.auditFieldMap) {
+    try {
+      const writeBack = await writeApprovalAuditToForm(record.issueKey, record.formSnapshot.instanceId, record.formSnapshot.auditFieldMap, {
+        approverName,
+        decidedAt: at,
+        decision: decision === 'approved' ? 'Approved' : 'Declined',
+        comment: reason,
+      });
+      record.formAuditWritten = writeBack?.written === true;
+      record.events = [...record.events, { type: record.formAuditWritten ? 'form-audit-written' : 'form-audit-skipped', at: nowIso(), by: 'system' }];
+    } catch (error) {
+      record.formAuditWritten = false;
+      record.events = [...record.events, { type: 'form-audit-write-failed', at: nowIso(), by: 'system' }];
+    }
+    record.updatedAt = nowIso();
+    await saveApproval(record);
+  }
 
   const records = await groupRecords(record);
   const mode = record.approvalMode === 'any' ? 'any' : 'all';
