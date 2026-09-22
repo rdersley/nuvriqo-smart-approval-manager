@@ -3,7 +3,7 @@ import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
 import { enrichApproval, resolveDisplayName, stripStoredDisplayName } from './users.js';
 import { run as prepareRuleSuggestion } from './automation.js';
-import { getFormPreview } from './forms.js';
+import { getFormPreview, attachExternalFormToIssue, listIssueForms } from './forms.js';
 
 const resolver = new Resolver();
 const nowIso = () => new Date().toISOString();
@@ -139,6 +139,40 @@ resolver.define('getApprovalDefaults', async ({ payload }) => {
     reminderHours: Math.min(720, Math.max(1, Number(settings.reminderHours || 24))),
     suggestion: enrichedSuggestion,
   };
+});
+
+
+resolver.define('getApprovalFormStatus', async ({ payload }) => {
+  const issueKey = clean(payload?.issueKey, 100);
+  if (!issueKey) return { configured: false };
+  await getIssueAsUser(issueKey);
+  const suggestion = await kvs.get(suggestionKey(issueKey));
+  if (!suggestion?.formEnabled || !suggestion?.formId) return { configured: false };
+  const forms = await listIssueForms(issueKey);
+  const existing = forms.find((form) => clean(form?.formTemplate?.id || form?.id, 300) === clean(suggestion.formId, 300));
+  return {
+    configured: true,
+    ruleName: clean(suggestion.ruleName, 200),
+    formId: clean(suggestion.formId, 300),
+    attached: Boolean(existing),
+    instanceId: clean(existing?.id, 300),
+    name: clean(existing?.name || 'Configured JSM Form', 500),
+    submitted: existing?.submitted === true || existing?.state?.status === 's',
+  };
+});
+
+resolver.define('sendApprovalFormToCustomer', async ({ payload }) => {
+  const issueKey = clean(payload?.issueKey, 100);
+  if (!issueKey) throw new Error('Issue is required.');
+  await getIssueAsUser(issueKey);
+  const suggestion = await kvs.get(suggestionKey(issueKey));
+  if (!suggestion?.formEnabled || !suggestion?.formId) throw new Error('The matched approval rule does not have a JSM Form configured.');
+  const forms = await listIssueForms(issueKey);
+  const existing = forms.find((form) => clean(form?.formTemplate?.id || form?.id, 300) === clean(suggestion.formId, 300));
+  if (existing) return { attached: true, alreadyAttached: true, instanceId: clean(existing.id, 300), name: clean(existing.name || 'JSM Form', 500), submitted: existing?.submitted === true || existing?.state?.status === 's' };
+  const attached = await attachExternalFormToIssue(issueKey, suggestion.formId);
+  await addPublicComment(issueKey, 'A form is required for this request. Please open this request in the customer portal, complete the attached form and submit it.');
+  return { attached: true, alreadyAttached: false, ...attached };
 });
 
 resolver.define('createApproval', async ({ payload, context }) => {
