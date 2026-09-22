@@ -80,6 +80,11 @@ const PortalSummary = () => {
           {a.ruleName ? <Text><Text weight="bold">Prepared by:</Text> {a.ruleName}</Text> : null}
           {a.createdAt ? <Text><Text weight="bold">Requested:</Text> {new Date(a.createdAt).toLocaleString()}</Text> : null}
           <Text><Text weight="bold">Approval requirement:</Text> {requirement}</Text>
+          {a.formSnapshot?.answers?.length ? <Stack space="space.050">
+            <Text><Text weight="bold">Submitted form:</Text> {a.formSnapshot.name || 'Request form'}</Text>
+            {a.formSnapshot.answers.slice(0, 8).map((row, index) => <Text key={`${a.id}-preview-${index}`}><Text weight="bold">{row.label || row.fieldKey}:</Text> {row.answer || '—'}</Text>)}
+            {a.formSnapshot.answers.length > 8 ? <Text>Open My Approvals to review all submitted form details.</Text> : null}
+          </Stack> : null}
         </Stack> : null}
 
         <TextArea
