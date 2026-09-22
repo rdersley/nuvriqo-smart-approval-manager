@@ -35,6 +35,8 @@ const Settings = () => {
   const [settings, setSettings] = useState(null);
   const [fields, setFields] = useState([]);
   const [statuses, setStatuses] = useState([]);
+  const [projectForms, setProjectForms] = useState([]);
+  const [formFields, setFormFields] = useState({});
   const [commonOptions, setCommonOptions] = useState({});
   const [fieldOptions, setFieldOptions] = useState({});
   const [message, setMessage] = useState('');
@@ -50,11 +52,13 @@ const Settings = () => {
     Promise.all([
       invoke('getSettings', { projectId }),
       invoke('getRuleBuilderMetadata', { projectId }),
-    ]).then(([value, meta]) => {
+      invoke('getProjectForms', { projectId }),
+    ]).then(([value, meta, forms]) => {
       setSettings(value);
       setFields(meta?.fields || []);
       setStatuses(meta?.statuses || []);
       setCommonOptions(meta?.commonOptions || {});
+      setProjectForms(forms || []);
     }).catch((e) => setMessage(e.message || String(e)));
   }, [projectId]);
 
@@ -92,6 +96,16 @@ const Settings = () => {
       setFieldOptions((prev) => ({ ...prev, [key]: options || [] }));
     } catch {
       setFieldOptions((prev) => ({ ...prev, [key]: [] }));
+    }
+  };
+
+  const loadFormFields = async (formId) => {
+    if (!formId || formFields[formId]) return;
+    try {
+      const rows = await invoke('getProjectFormFields', { projectId, formId });
+      setFormFields((prev) => ({ ...prev, [formId]: rows || [] }));
+    } catch (e) {
+      setMessage(e.message || String(e));
     }
   };
 
@@ -283,11 +297,34 @@ const Settings = () => {
             <Checkbox isChecked={rule.formEnabled === true} onChange={(e) => updateRule(ruleIndex, { formEnabled: e.target.checked })} label="Include submitted JSM Form details with this approval" />
             {rule.formEnabled ? <Stack space="space.100">
               <Text>The requester completes the native JSM Form in the customer portal. Smart Approval captures the submitted answers when the agent sends the approval.</Text>
-              <Label labelFor={`form-id-${ruleIndex}`}>JSM Form ID</Label>
-              <Textfield id={`form-id-${ruleIndex}`} value={rule.formId || ''} onChange={(e) => updateRule(ruleIndex, { formId: e.target.value })} placeholder="Leave blank to use the first submitted form" />
-              <Label labelFor={`form-fields-${ruleIndex}`}>Fields visible to approvers (optional)</Label>
-              <TextArea id={`form-fields-${ruleIndex}`} value={(rule.formFieldKeys || []).join('\n')} onChange={(e) => updateRule(ruleIndex, { formFieldKeys: e.target.value.split(/\r?\n|,/).map((x) => x.trim()).filter(Boolean) })} placeholder={'One form field key per line\nLeave blank to show all submitted answers'} />
-              <Text>Only the selected submitted answers are copied into the approval snapshot. The approver sees them in the customer portal.</Text>
+              <Label labelFor={`form-id-${ruleIndex}`}>JSM Form</Label>
+              <Select
+                inputId={`form-id-${ruleIndex}`}
+                options={projectForms.map((form) => ({ label: form.name, value: form.id }))}
+                value={rule.formId ? { label: projectForms.find((form) => form.id === rule.formId)?.name || rule.formId, value: rule.formId } : null}
+                placeholder="Choose a form from this service project"
+                onChange={(v) => {
+                  const formId = v?.value || '';
+                  updateRule(ruleIndex, { formId, formFieldKeys: [] });
+                  loadFormFields(formId);
+                }}
+              />
+              {rule.formId ? <Stack space="space.075">
+                <Label labelFor={`form-fields-${ruleIndex}`}>Fields visible to approvers</Label>
+                <Text>Select the submitted answers the approver needs to make a decision.</Text>
+                {(formFields[rule.formId] || []).length === 0 ? <Button appearance="subtle" onClick={() => loadFormFields(rule.formId)}>Load form fields</Button> : (formFields[rule.formId] || []).map((field) =>
+                  <Checkbox
+                    key={field.key}
+                    isChecked={(rule.formFieldKeys || []).includes(field.key)}
+                    onChange={(e) => {
+                      const current = rule.formFieldKeys || [];
+                      updateRule(ruleIndex, { formFieldKeys: e.target.checked ? [...current, field.key] : current.filter((key) => key !== field.key) });
+                    }}
+                    label={field.label}
+                  />
+                )}
+              </Stack> : null}
+              <Text>Only selected submitted answers are copied into the approval snapshot. If no fields are selected, all submitted answers are included.</Text>
             </Stack> : null}
 
             <Heading size="small">Approval request</Heading>
