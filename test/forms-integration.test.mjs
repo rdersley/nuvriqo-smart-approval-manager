@@ -36,3 +36,19 @@ test('forms client reads issue forms and simplified answers read-only', () => {
   assert.ok(!forms.includes("method: 'POST'"));
   assert.ok(!forms.includes("method: 'PUT'"));
 });
+
+
+test('approval decisions can be written back to configured JSM Form audit fields', () => {
+  assert.match(formsSource, /writeApprovalAuditToForm/);
+  assert.match(formsSource, /approvedByFieldKey/);
+  assert.match(formsSource, /approvedAtFieldKey/);
+  assert.match(formsSource, /decisionFieldKey/);
+  assert.match(formsSource, /decisionCommentFieldKey/);
+  assert.match(portalSource, /form-audit-written/);
+  assert.match(portalSource, /writeApprovalAuditToForm/);
+});
+
+test('form audit write-back is optional and failures do not undo approval', () => {
+  assert.match(formsSource, /reason: 'not-configured'/);
+  assert.match(portalSource, /form-audit-write-failed/);
+});
