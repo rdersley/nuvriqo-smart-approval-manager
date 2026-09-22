@@ -3,6 +3,7 @@ import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
 import { enrichApproval, resolveDisplayName, stripStoredDisplayName } from './users.js';
 import { run as prepareRuleSuggestion } from './automation.js';
+import { getFormPreview } from './forms.js';
 
 const resolver = new Resolver();
 const nowIso = () => new Date().toISOString();
@@ -169,6 +170,27 @@ resolver.define('createApproval', async ({ payload, context }) => {
   const reminderHours = Math.min(720, Math.max(1, Number(payload?.reminderHours || prepared?.reminderHours || settings.reminderHours || 24)));
   const records = [];
 
+  // Capture a small approval-time snapshot of the submitted JSM Form. This
+  // ensures the portal approver reviews the same answers the agent sent.
+  // Forms remain optional and a Forms API failure must never block legacy approvals.
+  let formSnapshot = null;
+  try {
+    const cloudId = clean(context?.cloudId, 200);
+    if (cloudId) {
+      const preview = await getFormPreview(cloudId, issueKey, prepared?.formId || '');
+      if (preview?.submitted && Array.isArray(preview.answers)) {
+        const allowedKeys = Array.isArray(prepared?.formFieldKeys) ? new Set(prepared.formFieldKeys.map((x) => clean(x, 300))) : null;
+        const answers = preview.answers
+          .filter((row) => !allowedKeys || allowedKeys.size === 0 || allowedKeys.has(clean(row.fieldKey, 300)))
+          .slice(0, 50)
+          .map((row) => ({ fieldKey: clean(row.fieldKey, 300), label: clean(row.label, 500), answer: clean(row.answer, 4000) }));
+        formSnapshot = { formId: clean(preview.formId, 300), name: clean(preview.name, 500), capturedAt: nowIso(), answers };
+      }
+    }
+  } catch (error) {
+    console.warn('Smart Approval: unable to capture optional JSM Form snapshot', error?.message || error);
+  }
+
   const approvedTarget = clean(prepared?.approveTargetStatus || settings.approveTargetStatus, 200);
   const declinedTarget = clean(prepared?.declineTargetStatus || settings.declineTargetStatus, 200);
   const approvedTransition = clean(prepared?.approveTransitionId || settings.approveTransitionId, 100);
@@ -185,7 +207,7 @@ resolver.define('createApproval', async ({ payload, context }) => {
       source: prepared ? 'rule-assisted' : 'manual',
       ruleId: prepared ? clean(prepared.ruleId, 200) : '',
       ruleName: prepared ? clean(prepared.ruleName, 200) : '',
-      message: clean(payload?.message, 2000), status: 'pending', createdAt, updatedAt: createdAt,
+      message: clean(payload?.message, 2000), formSnapshot, status: 'pending', createdAt, updatedAt: createdAt,
       reminderHours, reminderCount: 0, nextReminderAt: new Date(Date.now() + reminderHours * 3600000).toISOString(),
       ruleTargetStatuses: { approved: approvedTarget, declined: declinedTarget },
       ruleTransitionIds: { approved: approvedTransition, declined: declinedTransition },
