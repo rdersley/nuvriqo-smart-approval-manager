@@ -1,4 +1,4 @@
-import api from '@forge/api';
+import api, { route } from '@forge/api';
 
 const clean = (value, max = 2000) => String(value ?? '').trim().slice(0, max);
 
@@ -8,26 +8,33 @@ async function readJson(response) {
   return body ? JSON.parse(body) : null;
 }
 
-function formsUrl(cloudId, path) {
-  return 'https://api.atlassian.com/jira/forms/cloud/' + encodeURIComponent(clean(cloudId, 200)) + '/' + path;
-}
-
-async function requestForms(cloudId, path) {
-  return readJson(await api.asApp().fetch(formsUrl(cloudId, path), {
+async function requestForms(path) {
+  return readJson(await api.asApp().requestJira(path, {
     method: 'GET',
     headers: { Accept: 'application/json' },
   }));
 }
 
-export async function listIssueForms(cloudId, issueKey) {
-  if (!cloudId || !issueKey) return [];
-  const forms = await requestForms(cloudId, 'issue/' + encodeURIComponent(issueKey) + '/form');
+export async function listProjectForms(projectIdOrKey) {
+  if (!projectIdOrKey) return [];
+  const forms = await requestForms(route`/forms/project/${projectIdOrKey}/form`);
+  return Array.isArray(forms) ? forms : [];
+}
+
+export async function getProjectForm(projectIdOrKey, formId) {
+  if (!projectIdOrKey || !formId) return null;
+  return requestForms(route`/forms/project/${projectIdOrKey}/form/${formId}`);
+}
+
+export async function listIssueForms(issueKey) {
+  if (!issueKey) return [];
+  const forms = await requestForms(route`/forms/issue/${issueKey}/form`);
   return Array.isArray(forms) ? forms : (forms?.values || forms?.forms || []);
 }
 
-export async function getSimplifiedFormAnswers(cloudId, issueKey, formId) {
-  if (!cloudId || !issueKey || !formId) return [];
-  const rows = await requestForms(cloudId, 'issue/' + encodeURIComponent(issueKey) + '/form/' + encodeURIComponent(formId) + '/format/answers');
+export async function getSimplifiedFormAnswers(issueKey, formId) {
+  if (!issueKey || !formId) return [];
+  const rows = await requestForms(route`/forms/issue/${issueKey}/form/${formId}/format/answers`);
   return (Array.isArray(rows) ? rows : []).map((row) => ({
     fieldKey: clean(row?.fieldKey, 300),
     label: clean(row?.label, 500),
@@ -35,19 +42,28 @@ export async function getSimplifiedFormAnswers(cloudId, issueKey, formId) {
   })).filter((row) => row.label || row.fieldKey);
 }
 
-export async function getFormPreview(cloudId, issueKey, preferredFormId = '') {
-  const forms = await listIssueForms(cloudId, issueKey);
+export async function getFormPreview(issueKey, preferredFormId = '') {
+  const forms = await listIssueForms(issueKey);
   if (!forms.length) return null;
   const preferred = clean(preferredFormId, 300);
-  const selected = (preferred && forms.find((f) => clean(f?.id, 300) === preferred)) || forms[0];
-  const formId = clean(selected?.id, 300);
-  if (!formId) return null;
-  const answers = await getSimplifiedFormAnswers(cloudId, issueKey, formId);
+  const selected = (preferred && forms.find((f) => clean(f?.formTemplate?.id || f?.id, 300) === preferred)) || forms[0];
+  const instanceId = clean(selected?.id, 300);
+  if (!instanceId) return null;
+  const answers = await getSimplifiedFormAnswers(issueKey, instanceId);
   return {
-    formId,
-    name: clean(selected?.name || selected?.design?.settings?.name || 'JSM Form', 500),
+    formId: clean(selected?.formTemplate?.id || selected?.id, 300),
+    instanceId,
+    name: clean(selected?.name || 'JSM Form', 500),
     submitted: selected?.submitted === true || selected?.state?.status === 's',
     updated: clean(selected?.updated, 100),
     answers,
   };
+}
+
+export function projectFormFields(template) {
+  const questions = template?.design?.questions || {};
+  return Object.entries(questions).map(([key, question]) => ({
+    key: clean(key, 300),
+    label: clean(question?.label || question?.question || question?.name || key, 500),
+  })).filter((row) => row.key && row.label);
 }
