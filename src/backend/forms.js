@@ -4,8 +4,19 @@ const clean = (value, max = 2000) => String(value ?? '').trim().slice(0, max);
 
 async function readJson(response) {
   const body = await response.text();
-  if (!response.ok) throw new Error(body || ('Forms API error ' + response.status));
+  if (!response.ok) throw new Error('Forms API request failed with status ' + response.status);
   return body ? JSON.parse(body) : null;
+}
+
+function normalizeAnswer(value) {
+  if (value == null) return '';
+  if (Array.isArray(value)) return value.map(normalizeAnswer).filter(Boolean).join(', ');
+  if (typeof value === 'object') {
+    const preferred = value.text ?? value.label ?? value.name ?? value.value ?? value.choice;
+    if (preferred != null && preferred !== value) return normalizeAnswer(preferred);
+    return Object.values(value).map(normalizeAnswer).filter(Boolean).join(', ');
+  }
+  return String(value);
 }
 
 async function requestForms(path) {
@@ -38,7 +49,7 @@ export async function getSimplifiedFormAnswers(issueKey, formId) {
   return (Array.isArray(rows) ? rows : []).map((row) => ({
     fieldKey: clean(row?.fieldKey, 300),
     label: clean(row?.label, 500),
-    answer: clean(row?.answer ?? row?.choice, 4000),
+    answer: clean(normalizeAnswer(row?.answer ?? row?.choice), 4000),
   })).filter((row) => row.label || row.fieldKey);
 }
 
