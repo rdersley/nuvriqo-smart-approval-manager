@@ -22,6 +22,9 @@ const newRule = (number) => ({
   conditions: [{ fieldId: 'issuetype', operator: 'equals', value: '' }],
   approvers: [],
   message: 'Please review and approve this request.',
+  formEnabled: false,
+  formId: '',
+  formFieldKeys: [],
   reminderHours: 24,
   pendingTargetStatus: '', approveTargetStatus: '', declineTargetStatus: '',
 });
@@ -275,6 +278,17 @@ const Settings = () => {
               <Button onClick={() => findApprovers(ruleIndex)} isDisabled={(searchText[ruleIndex] || '').trim().length < 2}>Search</Button>
             </Inline>
             {(searchResults[ruleIndex] || []).length ? <Select placeholder="Choose approver to add" options={searchResults[ruleIndex].map((u) => ({ label: u.displayName, value: u.accountId }))} onChange={(v) => addApprover(ruleIndex, v?.value)} /> : null}
+
+            <Heading size="small">Approval form</Heading>
+            <Checkbox isChecked={rule.formEnabled === true} onChange={(e) => updateRule(ruleIndex, { formEnabled: e.target.checked })} label="Include submitted JSM Form details with this approval" />
+            {rule.formEnabled ? <Stack space="space.100">
+              <Text>The requester completes the native JSM Form in the customer portal. Smart Approval captures the submitted answers when the agent sends the approval.</Text>
+              <Label labelFor={`form-id-${ruleIndex}`}>JSM Form ID</Label>
+              <Textfield id={`form-id-${ruleIndex}`} value={rule.formId || ''} onChange={(e) => updateRule(ruleIndex, { formId: e.target.value })} placeholder="Leave blank to use the first submitted form" />
+              <Label labelFor={`form-fields-${ruleIndex}`}>Fields visible to approvers (optional)</Label>
+              <TextArea id={`form-fields-${ruleIndex}`} value={(rule.formFieldKeys || []).join('\n')} onChange={(e) => updateRule(ruleIndex, { formFieldKeys: e.target.value.split(/\r?\n|,/).map((x) => x.trim()).filter(Boolean) })} placeholder={'One form field key per line\nLeave blank to show all submitted answers'} />
+              <Text>Only the selected submitted answers are copied into the approval snapshot. The approver sees them in the customer portal.</Text>
+            </Stack> : null}
 
             <Heading size="small">Approval request</Heading>
             <Label labelFor={`mode-${ruleIndex}`}>Approval requirement</Label>
