@@ -42,8 +42,9 @@ function cleanRules(rules) {
     approvalMode: rule?.approvalMode === 'any' ? 'any' : 'all',
     conditions: (Array.isArray(rule?.conditions) ? rule.conditions : []).slice(0, 10).map((c) => ({
       fieldId: clean(c?.fieldId, 200),
-      operator: ['equals', 'notEquals', 'contains', 'isEmpty', 'notEmpty'].includes(c?.operator) ? c.operator : 'equals',
+      operator: ['equals', 'notEquals', 'contains', 'isEmpty', 'notEmpty', 'isAnyOf'].includes(c?.operator) ? c.operator : 'equals',
       value: clean(c?.value, 1000),
+      values: (Array.isArray(c?.values) ? c.values : []).slice(0, 50).map((v) => clean(v, 1000)).filter(Boolean),
     })).filter((c) => c.fieldId),
     // Persist only stable Atlassian account IDs; resolve display names when settings are read.
     approvers: (Array.isArray(rule?.approvers) ? rule.approvers : []).slice(0, 20).map((a) => ({
