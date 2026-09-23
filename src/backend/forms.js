@@ -45,11 +45,14 @@ export async function listIssueForms(issueKey) {
 
 export async function getSimplifiedFormAnswers(issueKey, formId) {
   if (!issueKey || !formId) return [];
-  const rows = await requestForms(route`/forms/issue/${issueKey}/form/${formId}/format/answers`);
+  const payload = await requestForms(route`/forms/issue/${issueKey}/form/${formId}/format/answers`);
+  // Atlassian Forms has returned this endpoint both as a direct array and as
+  // wrapped collections. Accept the known shapes and normalise common field IDs.
+  const rows = Array.isArray(payload) ? payload : (payload?.answers || payload?.values || payload?.questions || []);
   return (Array.isArray(rows) ? rows : []).map((row) => ({
-    fieldKey: clean(row?.fieldKey, 300),
-    label: clean(row?.label, 500),
-    answer: clean(normalizeAnswer(row?.answer ?? row?.choice), 4000),
+    fieldKey: clean(row?.fieldKey ?? row?.key ?? row?.questionId ?? row?.id, 300),
+    label: clean(row?.label ?? row?.question ?? row?.name ?? row?.title, 500),
+    answer: clean(normalizeAnswer(row?.answer ?? row?.value ?? row?.choice ?? row?.response), 4000),
   })).filter((row) => row.label || row.fieldKey);
 }
 
