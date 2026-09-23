@@ -83,3 +83,17 @@ test('multi-client conditions and form exposure are server-side protected', asyn
   assert.ok(agent.includes("await prepareRuleSuggestion({ issue: { key: issueKey"));
   assert.ok(agent.includes("This request no longer matches a rule that allows this JSM Form."));
 });
+
+
+test('form submission can automatically create the prepared approval without a second agent action', async () => {
+  const worker = await readFile(new URL('../src/backend/form-submission-worker.js', import.meta.url), 'utf8');
+  const manifest = await readFile(new URL('../manifest.yml', import.meta.url), 'utf8');
+  const settings = await readFile(new URL('../src/frontend/settings.jsx', import.meta.url), 'utf8');
+  assert.match(worker, /formwatch#/);
+  assert.match(worker, /form\?\.submitted === true/);
+  assert.match(worker, /prepareRuleSuggestion/);
+  assert.match(worker, /createApprovalHandler/);
+  assert.match(worker, /suggestion\.autoSendOnFormSubmit !== true/);
+  assert.match(manifest, /interval: fiveMinute/);
+  assert.match(settings, /Automatically send approval when the customer submits this form/);
+});
