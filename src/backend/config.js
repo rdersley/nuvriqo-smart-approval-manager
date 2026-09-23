@@ -52,6 +52,7 @@ function cleanRules(rules) {
     })).filter((a) => a.accountId && a.accountId !== 'unknown'),
     message: clean(rule?.message, 2000),
     formEnabled: rule?.formEnabled === true,
+    autoSendOnFormSubmit: rule?.autoSendOnFormSubmit === true,
     formId: clean(rule?.formId, 300),
     formFieldKeys: (Array.isArray(rule?.formFieldKeys) ? rule.formFieldKeys : []).slice(0, 50).map((x) => clean(x, 300)).filter(Boolean),
       approvedByFieldKey: clean(rule?.approvedByFieldKey, 300),
