@@ -24,6 +24,7 @@ const newRule = (number) => ({
   approvers: [],
   message: 'Please review and approve this request.',
   formEnabled: false,
+  autoSendOnFormSubmit: false,
   formId: '',
   formFieldKeys: [],
   reminderHours: 24,
@@ -311,7 +312,13 @@ const Settings = () => {
             <Heading size="small">Approval form</Heading>
             <Checkbox isChecked={rule.formEnabled === true} onChange={(e) => updateRule(ruleIndex, { formEnabled: e.target.checked })} label="Include submitted JSM Form details with this approval" />
             {rule.formEnabled ? <Stack space="space.100">
-              <Text>The requester completes the native JSM Form in the customer portal. Smart Approval captures the submitted answers when the agent sends the approval.</Text>
+              <Text>The requester completes the native JSM Form in the customer portal. Smart Approval captures the submitted answers when the approval is sent.</Text>
+              <Checkbox
+                isChecked={rule.autoSendOnFormSubmit === true}
+                onChange={(e) => updateRule(ruleIndex, { autoSendOnFormSubmit: e.target.checked })}
+                label="Automatically send approval when the customer submits this form"
+              />
+              {rule.autoSendOnFormSubmit ? <Text>After the agent sends the form, Smart Approval monitors it and sends the prepared approval automatically after submission. No second agent action is required.</Text> : <Text>After form submission, an agent sends the prepared approval manually.</Text>}
               <Label labelFor={`form-id-${ruleIndex}`}>JSM Form</Label>
               <Select
                 inputId={`form-id-${ruleIndex}`}
