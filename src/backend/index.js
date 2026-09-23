@@ -47,6 +47,10 @@ async function getIssueAsUser(issueKey) {
   return json(await api.asUser().requestJira(route`/rest/api/3/issue/${issueKey}?fields=summary,project,status,reporter`));
 }
 
+async function getIssueAsApp(issueKey) {
+  return json(await api.asApp().requestJira(route`/rest/api/3/issue/${issueKey}?fields=summary,project,status,reporter`));
+}
+
 async function getCanonicalUser(accountId) {
   return json(await api.asApp().requestJira(route`/rest/api/3/user?accountId=${accountId}`));
 }
@@ -179,12 +183,12 @@ resolver.define('sendApprovalFormToCustomer', async ({ payload }) => {
   return { attached: true, alreadyAttached: false, ...attached };
 });
 
-resolver.define('createApproval', async ({ payload, context }) => {
+export async function createApprovalHandler({ payload, context = {} }) {
   const issueKey = clean(payload?.issueKey, 100);
   const requestedApprovers = Array.isArray(payload?.approvers) ? payload.approvers : payload?.approver ? [payload.approver] : [];
   if (!issueKey || requestedApprovers.length === 0) throw new Error('Issue and at least one approver are required.');
 
-  const issue = await getIssueAsUser(issueKey);
+  const issue = payload?.system === true ? await getIssueAsApp(issueKey) : await getIssueAsUser(issueKey);
   const settings = (await kvs.get(configKey(String(issue.fields.project.id)))) || {};
   const suggestion = await kvs.get(suggestionKey(issueKey));
   const prepared = suggestion && clean(payload?.preparedRuleId, 200) && clean(payload.preparedRuleId, 200) === clean(suggestion.ruleId, 200) ? suggestion : null;
@@ -266,7 +270,9 @@ resolver.define('createApproval', async ({ payload, context }) => {
   }
   if (prepared) await kvs.delete(suggestionKey(issueKey));
   return Promise.all(records.map(enrichApproval));
-});
+}
+
+resolver.define('createApproval', createApprovalHandler);
 
 resolver.define('sendReminder', async ({ payload, context }) => {
   const record = await kvs.get(approvalKey(clean(payload?.approvalId, 200)));
