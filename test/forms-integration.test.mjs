@@ -70,3 +70,16 @@ test('complex Forms answers are normalized for approval display', () => {
   assert.match(forms, /function normalizeAnswer/);
   assert.match(forms, /Array\.isArray\(value\)/);
 });
+
+
+test('multi-client conditions and form exposure are server-side protected', async () => {
+  const automation = await readFile(new URL('../src/backend/automation.js', import.meta.url), 'utf8');
+  const config = await readFile(new URL('../src/backend/config.js', import.meta.url), 'utf8');
+  const agent = await readFile(new URL('../src/backend/index.js', import.meta.url), 'utf8');
+  assert.ok(config.includes("'isAnyOf'"));
+  assert.ok(config.includes("values: (Array.isArray(c?.values)"));
+  assert.ok(automation.includes("if (operator === 'isAnyOf')"));
+  assert.ok(automation.includes("expectedMany.some((v) => actual.includes(v))"));
+  assert.ok(agent.includes("await prepareRuleSuggestion({ issue: { key: issueKey"));
+  assert.ok(agent.includes("This request no longer matches a rule that allows this JSM Form."));
+});
