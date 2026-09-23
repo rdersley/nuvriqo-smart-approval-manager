@@ -13,6 +13,7 @@ const issueIndexKey = (issueKey, createdAt, id) => `issue#${issueKey}#${createdA
 const approverIndexKey = (accountId, createdAt, id) => `approver#${accountId}#${createdAt}#${id}`;
 const configKey = (projectId) => `config#${projectId}`;
 const suggestionKey = (issueKey) => `suggestion#${issueKey}`;
+const formWatchKey = (issueKey) => `formwatch#${issueKey}`;
 const clean = (value, max = 1000) => String(value ?? '').trim().slice(0, max);
 
 async function json(response) {
@@ -177,8 +178,16 @@ resolver.define('sendApprovalFormToCustomer', async ({ payload }) => {
   if (!suggestion?.formEnabled || !suggestion?.formId) throw new Error('This request no longer matches a rule that allows this JSM Form.');
   const forms = await listIssueForms(issueKey);
   const existing = forms.find((form) => clean(form?.formTemplate?.id || form?.id, 300) === clean(suggestion.formId, 300));
-  if (existing) return { attached: true, alreadyAttached: true, instanceId: clean(existing.id, 300), name: clean(existing.name || 'JSM Form', 500), submitted: existing?.submitted === true || existing?.state?.status === 's' };
+  if (existing) {
+    if (suggestion.autoSendOnFormSubmit === true && !(existing?.submitted === true || existing?.state?.status === 's')) {
+      await kvs.set(formWatchKey(issueKey), { issueKey, projectId: String(issue.fields.project.id), formId: clean(suggestion.formId, 300), instanceId: clean(existing.id, 300), ruleId: clean(suggestion.ruleId, 200), createdAt: nowIso() });
+    }
+    return { attached: true, alreadyAttached: true, instanceId: clean(existing.id, 300), name: clean(existing.name || 'JSM Form', 500), submitted: existing?.submitted === true || existing?.state?.status === 's' };
+  }
   const attached = await attachExternalFormToIssue(issueKey, suggestion.formId);
+  if (suggestion.autoSendOnFormSubmit === true) {
+    await kvs.set(formWatchKey(issueKey), { issueKey, projectId: String(issue.fields.project.id), formId: clean(suggestion.formId, 300), instanceId: clean(attached?.instanceId || attached?.id, 300), ruleId: clean(suggestion.ruleId, 200), createdAt: nowIso() });
+  }
   await addPublicComment(issueKey, 'A form is required for this request. Please open this request in the customer portal, complete the attached form and submit it.');
   return { attached: true, alreadyAttached: false, ...attached };
 });
