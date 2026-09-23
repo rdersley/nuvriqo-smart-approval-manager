@@ -68,8 +68,14 @@ modules:
     - key: reminder-worker
       handler: backend/reminders.run
       timeoutSeconds: 120
+    - key: form-submission-worker
+      handler: backend/form-submission-worker.run
+      timeoutSeconds: 120
 
   scheduledTrigger:
+    - key: smart-approval-form-submission
+      function: form-submission-worker
+      interval: fiveMinute
     - key: smart-approval-reminders
       function: reminder-worker
       interval: hour
