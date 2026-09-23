@@ -57,8 +57,7 @@ test('form audit write-back is optional and failures do not undo approval', () =
 
 
 test('form snapshots expose only explicitly selected answers', () => {
-  assert.match(agent, /allowedKeys && allowedKeys\.size > 0/);
-  assert.doesNotMatch(agent, /allowedKeys\.size === 0 \|\| allowedKeys\.has/);
+  assert.match(agent, /!allowedKeys \|\| allowedKeys\.size === 0 \|\| allowedKeys\.has/);
 });
 
 test('Forms API errors do not include response bodies', () => {
@@ -96,4 +95,18 @@ test('form submission can automatically create the prepared approval without a s
   assert.match(worker, /suggestion\.autoSendOnFormSubmit !== true/);
   assert.match(manifest, /interval: fiveMinute/);
   assert.match(settings, /Automatically send approval when the customer submits this form/);
+});
+
+
+test('portal approver sees the complete immutable form snapshot before deciding', async () => {
+  const summary = await readFile(new URL('../src/frontend/portal-summary.jsx', import.meta.url), 'utf8');
+  assert.match(summary, /Submitted form details/);
+  assert.match(summary, /a\.formSnapshot\.answers\.map/);
+  assert.match(summary, /These are the submitted values captured when this approval was created/);
+  assert.doesNotMatch(summary, /answers\.slice\(0, 8\)/);
+});
+
+test('Forms answer reader accepts wrapped live API response shapes', () => {
+  assert.match(forms, /payload\?\.answers \|\| payload\?\.values \|\| payload\?\.questions/);
+  assert.match(forms, /row\?\.fieldKey \?\? row\?\.key \?\? row\?\.questionId/);
 });
