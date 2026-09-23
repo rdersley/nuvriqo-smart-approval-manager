@@ -36,10 +36,12 @@ function conditionMatches(issue, condition) {
   const actual = values(issue.fields?.[fieldId]).map((v) => clean(v, 1000).toLowerCase());
   const expected = clean(condition?.value, 1000).toLowerCase();
   const operator = condition?.operator || 'equals';
+  const expectedMany = (Array.isArray(condition?.values) ? condition.values : []).map((v) => clean(v, 1000).toLowerCase()).filter(Boolean);
   if (operator === 'isEmpty') return actual.length === 0 || actual.every((v) => !v);
   if (operator === 'notEmpty') return actual.some(Boolean);
   if (operator === 'notEquals') return !actual.includes(expected);
   if (operator === 'contains') return actual.some((v) => v.includes(expected));
+  if (operator === 'isAnyOf') return expectedMany.length > 0 && expectedMany.some((v) => actual.includes(v));
   return actual.includes(expected);
 }
 
