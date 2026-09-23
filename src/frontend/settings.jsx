@@ -10,6 +10,7 @@ const operatorOptions = [
   { label: 'Equals', value: 'equals' },
   { label: 'Does not equal', value: 'notEquals' },
   { label: 'Contains', value: 'contains' },
+  { label: 'Is any of', value: 'isAnyOf' },
   { label: 'Is empty', value: 'isEmpty' },
   { label: 'Is not empty', value: 'notEmpty' },
 ];
@@ -78,7 +79,7 @@ const Settings = () => {
     const trigger = rule.triggerStatus ? `At ${rule.triggerStatus}: ` : '';
     const conditions = (rule.conditions || []).filter((c) => c.fieldId).map((c) => {
       if (c.operator === 'isEmpty' || c.operator === 'notEmpty') return `${getFieldName(c.fieldId)} ${getOperatorName(c.operator)}`;
-      return `${getFieldName(c.fieldId)} ${getOperatorName(c.operator)} ${c.value || '…'}`;
+      return `${getFieldName(c.fieldId)} ${getOperatorName(c.operator)} ${c.operator === 'isAnyOf' ? ((c.values || []).join(', ') || '…') : (c.value || '…')}`;
     }).join(' AND ');
     const approvers = (rule.approvers || []).map((a) => a.displayName).join(', ') || 'no approvers selected';
     const mode = rule.approvalMode === 'any' ? 'any one can approve' : 'all must approve';
@@ -268,20 +269,34 @@ const Settings = () => {
                     placeholder="Choose Jira field"
                     onChange={(v) => {
                       const fieldId = v?.value || '';
-                      updateCondition(ruleIndex, conditionIndex, { fieldId, value: '' });
+                      updateCondition(ruleIndex, conditionIndex, { fieldId, value: '', values: [] });
                       loadOptions(fieldId, `${rule.id}:${conditionIndex}:${fieldId}`);
                     }}
                   />
                   <Select options={operatorOptions} value={operatorOptions.find((o) => o.value === condition.operator) || operatorOptions[0]} onChange={(v) => updateCondition(ruleIndex, conditionIndex, { operator: v?.value || 'equals' })} />
-                  {!['isEmpty', 'notEmpty'].includes(condition.operator) ? (options.length ?
-                    <Select options={options} value={condition.value ? { label: condition.value, value: condition.value } : null} placeholder="Choose value" onChange={(v) => updateCondition(ruleIndex, conditionIndex, { value: v?.value || '' })} /> :
-                    <Textfield value={condition.value || ''} placeholder="Value to match" onChange={(e) => updateCondition(ruleIndex, conditionIndex, { value: e.target.value })} />
+                  {!['isEmpty', 'notEmpty'].includes(condition.operator) ? (
+                    condition.operator === 'isAnyOf' ? (
+                      options.length ? <Select
+                        isMulti
+                        options={options}
+                        value={(condition.values || []).map((value) => ({ label: value, value }))}
+                        placeholder="Choose one or more allowed values"
+                        onChange={(items) => updateCondition(ruleIndex, conditionIndex, { values: (items || []).map((item) => item.value), value: '' })}
+                      /> : <Textfield
+                        value={(condition.values || []).join(', ')}
+                        placeholder="Allowed values, separated by commas"
+                        onChange={(e) => updateCondition(ruleIndex, conditionIndex, { values: e.target.value.split(',').map((value) => value.trim()).filter(Boolean), value: '' })}
+                      />
+                    ) : (options.length ?
+                      <Select options={options} value={condition.value ? { label: condition.value, value: condition.value } : null} placeholder="Choose value" onChange={(v) => updateCondition(ruleIndex, conditionIndex, { value: v?.value || '', values: [] })} /> :
+                      <Textfield value={condition.value || ''} placeholder="Value to match" onChange={(e) => updateCondition(ruleIndex, conditionIndex, { value: e.target.value, values: [] })} />
+                    )
                   ) : null}
                 </Inline>
                 <Button appearance="subtle" onClick={() => updateRule(ruleIndex, { conditions: rule.conditions.filter((_, i) => i !== conditionIndex) })}>Remove condition</Button>
               </Stack>;
             })}
-            <Button appearance="subtle" onClick={() => updateRule(ruleIndex, { conditions: [...(rule.conditions || []), { fieldId: '', operator: 'equals', value: '' }] })}>Add condition</Button>
+            <Button appearance="subtle" onClick={() => updateRule(ruleIndex, { conditions: [...(rule.conditions || []), { fieldId: '', operator: 'equals', value: '', values: [] }] })}>Add condition</Button>
 
             <Heading size="small">Approvers</Heading>
             {(rule.approvers || []).length === 0 ? <Text>No approvers selected.</Text> : (rule.approvers || []).map((a) =>
