@@ -164,9 +164,13 @@ resolver.define('getApprovalFormStatus', async ({ payload }) => {
 resolver.define('sendApprovalFormToCustomer', async ({ payload }) => {
   const issueKey = clean(payload?.issueKey, 100);
   if (!issueKey) throw new Error('Issue is required.');
-  await getIssueAsUser(issueKey);
+  const issue = await getIssueAsUser(issueKey);
+  // Re-evaluate the complete rule immediately before attaching the form. This is
+  // the server-side client/condition safety check: a stale UI suggestion cannot
+  // expose a client-specific form after SD Client or another condition changes.
+  await prepareRuleSuggestion({ issue: { key: issueKey, fields: { project: { id: String(issue.fields.project.id) } } } });
   const suggestion = await kvs.get(suggestionKey(issueKey));
-  if (!suggestion?.formEnabled || !suggestion?.formId) throw new Error('The matched approval rule does not have a JSM Form configured.');
+  if (!suggestion?.formEnabled || !suggestion?.formId) throw new Error('This request no longer matches a rule that allows this JSM Form.');
   const forms = await listIssueForms(issueKey);
   const existing = forms.find((form) => clean(form?.formTemplate?.id || form?.id, 300) === clean(suggestion.formId, 300));
   if (existing) return { attached: true, alreadyAttached: true, instanceId: clean(existing.id, 300), name: clean(existing.name || 'JSM Form', 500), submitted: existing?.submitted === true || existing?.state?.status === 's' };
