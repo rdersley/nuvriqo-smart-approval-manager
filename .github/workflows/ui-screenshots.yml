@@ -1,0 +1,103 @@
+name: UI Screenshots (Nuvriqo)
+
+# Photographs the Smart Approval build already deployed to the Forge
+# development environment, on the Nuvriqo test site only. This workflow never
+# deploys: development is shared with the work site installation.
+on:
+  push:
+    branches: [qa/ui-screenshot-journey]
+    paths: [ui-tests/**, playwright.config.cjs, .github/workflows/ui-screenshots.yml]
+  workflow_dispatch:
+    inputs:
+      approver_email:
+        description: Approver email (blank = the Jira test account itself)
+        required: false
+        default: ''
+  workflow_run:
+    workflows: [Remote Forge QA]
+    types: [completed]
+    branches: [main, feature/jsm-forms-integration]
+
+concurrency:
+  group: smart-approval-ui-screenshots
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  screenshots:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      JIRA_BASE_URL: https://nuvriqo.atlassian.net
+      JIRA_TEST_ISSUE_KEY: TEST-8
+      JIRA_TEST_PROJECT_KEY: TEST
+      JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+      JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+      APPROVER_EMAIL: ${{ inputs.approver_email }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check required secrets
+        shell: bash
+        env:
+          JIRA_STORAGE_STATE_GZIP_B64: ${{ secrets.JIRA_STORAGE_STATE_GZIP_B64 }}
+        run: |
+          test -n "$JIRA_EMAIL" || (echo "Missing JIRA_EMAIL" && exit 1)
+          test -n "$JIRA_API_TOKEN" || (echo "Missing JIRA_API_TOKEN" && exit 1)
+          test -n "$JIRA_STORAGE_STATE_GZIP_B64" || (echo "Missing JIRA_STORAGE_STATE_GZIP_B64" && exit 1)
+
+      - name: Install Playwright
+        run: |
+          npm install --no-save --no-audit --no-fund @playwright/test
+          npx playwright install --with-deps chromium
+
+      - name: Restore Jira sessions
+        shell: bash
+        env:
+          JIRA_STORAGE_STATE_GZIP_B64: ${{ secrets.JIRA_STORAGE_STATE_GZIP_B64 }}
+          CUSTOMER_STORAGE_STATE_GZIP_B64: ${{ secrets.JIRA_CUSTOMER_STORAGE_STATE_GZIP_B64 }}
+        run: |
+          mkdir -p .auth
+          printf '%s' "$JIRA_STORAGE_STATE_GZIP_B64" | base64 --decode | gzip --decompress > .auth/jira.json
+          node -e "JSON.parse(require('fs').readFileSync('.auth/jira.json','utf8'))"
+          if [ -n "$CUSTOMER_STORAGE_STATE_GZIP_B64" ] && [ -n "$APPROVER_EMAIL" ]; then
+            printf '%s' "$CUSTOMER_STORAGE_STATE_GZIP_B64" | base64 --decode | gzip --decompress > .auth/customer.json
+            node -e "JSON.parse(require('fs').readFileSync('.auth/customer.json','utf8'))"
+            echo "CUSTOMER_STORAGE_STATE=.auth/customer.json" >> "$GITHUB_ENV"
+            echo "Approving as the customer account"
+          else
+            echo "Approving as the Jira test account"
+          fi
+
+      - name: Smoke test (existing ticket)
+        run: npx playwright test ui-tests/smoke.spec.js
+
+      - name: Approval journey with screenshots
+        if: success() || failure()
+        run: npx playwright test ui-tests/approval-journey.spec.js
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smart-approval-screenshots-${{ github.run_number }}
+          path: screenshots/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ github.run_number }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14
