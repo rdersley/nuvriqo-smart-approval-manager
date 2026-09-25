@@ -4,14 +4,13 @@
 //
 // Creates one fresh ticket per run (labelled smart-approval-screenshots); it
 // never deploys the app and refuses to run against any other site.
-const { test, expect, request } = require('@playwright/test');
+const { test, expect } = require('@playwright/test');
 const fs = require('fs');
 const path = require('path');
 
 const ALLOWED_HOST = 'nuvriqo.atlassian.net';
 const BASE = (process.env.JIRA_BASE_URL || `https://${ALLOWED_HOST}`).replace(/\/$/, '');
 const PROJECT = process.env.JIRA_TEST_PROJECT_KEY || 'TEST';
-const APPROVER_EMAIL = process.env.APPROVER_EMAIL || process.env.JIRA_EMAIL;
 const CUSTOMER_STATE = process.env.CUSTOMER_STORAGE_STATE || '';
 const OUT = path.join(process.cwd(), 'screenshots');
 
@@ -27,9 +26,25 @@ async function shot(page, name) {
 
 const appears = (locator, timeout) => locator.waitFor({ state: 'visible', timeout }).then(() => true, () => false);
 
-async function jiraApi() {
-  const auth = Buffer.from(`${process.env.JIRA_EMAIL}:${process.env.JIRA_API_TOKEN}`).toString('base64');
-  return request.newContext({ baseURL: BASE, extraHTTPHeaders: { Authorization: `Basic ${auth}`, Accept: 'application/json' } });
+// Jira REST calls reuse the signed-in browser session (the same one the UI
+// steps use), so no separate API token is needed. The header lets Jira accept
+// cookie-authenticated writes.
+function jiraApi(page) {
+  const headers = { Accept: 'application/json', 'X-Atlassian-Token': 'no-check' };
+  const api = page.context().request;
+  return {
+    get: (url) => api.get(BASE + url, { headers }),
+    post: (url, options) => api.post(BASE + url, { headers, ...options }),
+  };
+}
+
+// The approver defaults to the signed-in test account itself.
+async function approverQuery(api) {
+  if (process.env.APPROVER_EMAIL) return process.env.APPROVER_EMAIL;
+  const me = await api.get('/rest/api/3/myself');
+  expect(me.ok(), `Jira session is not signed in (re-create JIRA_STORAGE_STATE_GZIP_B64): ${me.status()}`).toBeTruthy();
+  const user = await me.json();
+  return user.emailAddress || user.displayName;
 }
 
 async function createTicket(api) {
@@ -74,11 +89,10 @@ async function openPanel(page) {
 test('agent → portal approver → agent approval journey', async ({ page, browser }) => {
   test.setTimeout(8 * 60 * 1000);
   expect(new URL(BASE).host, 'Screenshot journey only runs on the Nuvriqo test site').toBe(ALLOWED_HOST);
-  expect(process.env.JIRA_EMAIL && process.env.JIRA_API_TOKEN, 'JIRA_EMAIL and JIRA_API_TOKEN are required').toBeTruthy();
-  expect(APPROVER_EMAIL, 'APPROVER_EMAIL is required').toBeTruthy();
   fs.mkdirSync(OUT, { recursive: true });
 
-  const api = await jiraApi();
+  const api = jiraApi(page);
+  const approver = await approverQuery(api);
   const key = await createTicket(api);
   const portalLink = await portalUrl(api, key);
   test.info().annotations.push({ type: 'ticket', description: `${BASE}/browse/${key}` });
@@ -91,7 +105,7 @@ test('agent → portal approver → agent approval journey', async ({ page, brow
   });
 
   await test.step('agent selects the approver and sends the request', async () => {
-    await page.getByPlaceholder('Search by name or email').fill(APPROVER_EMAIL);
+    await page.getByPlaceholder('Search by name or email').fill(approver);
     await page.getByRole('button', { name: 'Search', exact: true }).click();
     await expect(page.getByText(/approvers? selected\./)).toBeVisible({ timeout: 30000 });
     await page.getByPlaceholder('Explain what the customer is being asked to approve')
@@ -154,5 +168,4 @@ test('agent → portal approver → agent approval journey', async ({ page, brow
   });
 
   await approverContext?.close();
-  await api.dispose();
 });

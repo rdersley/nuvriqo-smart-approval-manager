@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       approver_email:
-        description: Approver email (blank = the Jira test account itself)
+        description: Approver email or name (blank = the signed-in test account)
         required: false
         default: ''
   workflow_run:
@@ -34,8 +34,6 @@ jobs:
       JIRA_BASE_URL: https://nuvriqo.atlassian.net
       JIRA_TEST_ISSUE_KEY: TEST-8
       JIRA_TEST_PROJECT_KEY: TEST
-      JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
-      JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
       APPROVER_EMAIL: ${{ inputs.approver_email }}
 
     steps:
@@ -49,8 +47,6 @@ jobs:
         env:
           JIRA_STORAGE_STATE_GZIP_B64: ${{ secrets.JIRA_STORAGE_STATE_GZIP_B64 }}
         run: |
-          test -n "$JIRA_EMAIL" || (echo "Missing JIRA_EMAIL" && exit 1)
-          test -n "$JIRA_API_TOKEN" || (echo "Missing JIRA_API_TOKEN" && exit 1)
           test -n "$JIRA_STORAGE_STATE_GZIP_B64" || (echo "Missing JIRA_STORAGE_STATE_GZIP_B64" && exit 1)
 
       - name: Install Playwright
@@ -77,10 +73,11 @@ jobs:
           fi
 
       - name: Smoke test (existing ticket)
+        id: smoke
         run: npx playwright test ui-tests/smoke.spec.js
 
       - name: Approval journey with screenshots
-        if: success() || failure()
+        if: always() && (steps.smoke.outcome == 'success' || steps.smoke.outcome == 'failure')
         run: npx playwright test ui-tests/approval-journey.spec.js
 
       - name: Upload screenshots
