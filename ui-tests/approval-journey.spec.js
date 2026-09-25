@@ -17,7 +17,10 @@ const OUT = path.join(process.cwd(), 'screenshots');
 test.describe.configure({ retries: 0 }); // a retry would create a second ticket
 
 let shotNumber = 0;
-async function shot(page, name) {
+// Jira's issue view scrolls inside its own container, so a full-page capture
+// misses the panel; scroll the step's key element into view first.
+async function shot(page, name, focus) {
+  if (focus) await focus.scrollIntoViewIfNeeded().catch(() => {});
   shotNumber += 1;
   const file = path.join(OUT, `${String(shotNumber).padStart(2, '0')}-${name}.png`);
   await page.screenshot({ path: file, fullPage: true });
@@ -126,7 +129,7 @@ test('agent → portal approver → agent approval journey', async ({ page, brow
     // The panel renders before its data loads; wait for the activity list so a
     // rule's prepared approvers cannot replace the selection made below.
     await expect(page.getByText('No approvals have been sent for this ticket yet.')).toBeVisible({ timeout: 60000 });
-    await shot(page, 'agent-panel-new-ticket');
+    await shot(page, 'agent-panel-new-ticket', page.getByText('1. Choose who should approve'));
   });
 
   await test.step('agent selects the approver and sends the request', async () => {
@@ -148,10 +151,10 @@ test('agent → portal approver → agent approval journey', async ({ page, brow
     if (approver.name) await expect(page.getByText(approver.name, { exact: true }).first()).toBeVisible();
     await page.getByPlaceholder('Explain what the customer is being asked to approve')
       .fill('Screenshot run: please approve this test request.');
-    await shot(page, 'agent-approver-selected');
+    await shot(page, 'agent-approver-selected', page.getByText('2. Add the approval message'));
     await page.getByRole('button', { name: 'Send approval request' }).click();
     await expect(page.getByText('Waiting', { exact: true }).first()).toBeVisible({ timeout: 60000 });
-    await shot(page, 'agent-approval-sent');
+    await shot(page, 'agent-approval-sent', page.getByText('Approval activity'));
   });
 
   const approverContext = CUSTOMER_STATE ? await browser.newContext({ storageState: CUSTOMER_STATE }) : null;
@@ -202,7 +205,7 @@ test('agent → portal approver → agent approval journey', async ({ page, brow
     await page.goto(`${BASE}/browse/${key}`, { waitUntil: 'domcontentloaded' });
     await openPanel(page);
     await expect(page.getByText('Approved', { exact: true }).first()).toBeVisible({ timeout: 60000 });
-    await shot(page, 'agent-approval-complete');
+    await shot(page, 'agent-approval-complete', page.getByText('Approval activity'));
   });
 
   await approverContext?.close();
