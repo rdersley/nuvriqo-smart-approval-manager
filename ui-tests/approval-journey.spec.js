@@ -26,15 +26,28 @@ async function shot(page, name) {
 
 const appears = (locator, timeout) => locator.waitFor({ state: 'visible', timeout }).then(() => true, () => false);
 
-// Jira REST calls reuse the signed-in browser session (the same one the UI
-// steps use), so no separate API token is needed. The header lets Jira accept
-// cookie-authenticated writes.
+// Jira REST calls run as same-origin fetches inside a Jira page, exactly like
+// Jira's own UI, so they reuse the signed-in session (no API token) and pass
+// Jira's XSRF protection, which rejects cookie-authenticated calls from outside
+// the browser.
 function jiraApi(page) {
-  const headers = { Accept: 'application/json', 'X-Atlassian-Token': 'no-check' };
-  const api = page.context().request;
+  const call = (method, url, data) => page.evaluate(async ({ method, url, data }) => {
+    const res = await fetch(url, {
+      method,
+      credentials: 'include',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-Atlassian-Token': 'no-check' },
+      body: data === undefined ? undefined : JSON.stringify(data),
+    });
+    return { status: res.status, body: await res.text() };
+  }, { method, url, data }).then((r) => ({
+    ok: () => r.status >= 200 && r.status < 300,
+    status: () => r.status,
+    text: async () => r.body,
+    json: async () => JSON.parse(r.body),
+  }));
   return {
-    get: (url) => api.get(BASE + url, { headers }),
-    post: (url, options) => api.post(BASE + url, { headers, ...options }),
+    get: (url) => call('GET', url),
+    post: (url, options) => call('POST', url, options?.data),
   };
 }
 
@@ -91,6 +104,7 @@ test('agent → portal approver → agent approval journey', async ({ page, brow
   expect(new URL(BASE).host, 'Screenshot journey only runs on the Nuvriqo test site').toBe(ALLOWED_HOST);
   fs.mkdirSync(OUT, { recursive: true });
 
+  await page.goto(`${BASE}/jira/your-work`, { waitUntil: 'domcontentloaded' });
   const api = jiraApi(page);
   const approver = await approverQuery(api);
   const key = await createTicket(api);
