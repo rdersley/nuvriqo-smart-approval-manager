@@ -1,9 +1,16 @@
 import api, { route } from '@forge/api';
 import { kvs } from '@forge/kvs';
+import { expirePendingForIssue } from './store.js';
 
 const configKey = (projectId) => `config#${projectId}`;
 const suggestionKey = (issueKey) => `suggestion#${issueKey}`;
 const clean = (value, max = 1000) => String(value ?? '').trim().slice(0, max);
+const isDone = (issue) => issue?.fields?.status?.statusCategory?.key === 'done';
+
+async function closeOut(issueKey) {
+  await expirePendingForIssue(issueKey, 'ticket-resolved');
+  await Promise.all([kvs.delete(suggestionKey(issueKey)), kvs.delete(`formwatch#${issueKey}`)]);
+}
 
 async function json(response) {
   const body = await response.text();
@@ -59,6 +66,10 @@ export async function run(event) {
   const projectId = String(event?.issue?.fields?.project?.id || '');
   if (!issueKey || !projectId) return;
 
+  // A finished ticket needs no approval: withdraw anything still outstanding so
+  // reminders stop and a late decision cannot transition the closed ticket.
+  if (isDone(event.issue)) return closeOut(issueKey);
+
   const settings = (await kvs.get(configKey(projectId))) || {};
   const rules = Array.isArray(settings.autoRules) ? settings.autoRules : [];
   if (!rules.length) {
@@ -67,6 +78,7 @@ export async function run(event) {
   }
 
   const issue = await json(await api.asApp().requestJira(route`/rest/api/3/issue/${issueKey}?fields=*all`));
+  if (isDone(issue)) return closeOut(issueKey);
   const rule = rules.find((candidate) => ruleMatches(issue, candidate));
   if (!rule) {
     await kvs.delete(suggestionKey(issueKey));

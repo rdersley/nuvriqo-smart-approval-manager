@@ -1,23 +1,16 @@
-import { kvs, WhereConditions } from '@forge/kvs';
+import { kvs } from '@forge/kvs';
 import { listIssueForms } from './forms.js';
 import { run as prepareRuleSuggestion } from './automation.js';
 import { createApprovalHandler } from './index.js';
+import { clean, issueState, queryPrefix } from './store.js';
 
-const clean = (value, max = 1000) => String(value ?? '').trim().slice(0, max);
 const suggestionKey = (issueKey) => `suggestion#${issueKey}`;
 const formWatchKey = (issueKey) => `formwatch#${issueKey}`;
 
-async function watches(max = 100) {
-  let cursor;
-  const out = [];
-  do {
-    let query = kvs.query().where('key', WhereConditions.beginsWith('formwatch#')).limit(20);
-    if (cursor) query = query.cursor(cursor);
-    const page = await query.getMany();
-    out.push(...(page?.results || []));
-    cursor = page?.nextCursor;
-  } while (cursor && out.length < max);
-  return out.slice(0, max).map((row) => row.value).filter(Boolean);
+// Every watch is read: a cap here would let forms that are never submitted
+// crowd out newer ones, which would then never send their approval.
+async function watches() {
+  return (await queryPrefix('formwatch#')).map((row) => row.value).filter(Boolean);
 }
 
 export async function run() {
@@ -25,6 +18,11 @@ export async function run() {
     const issueKey = clean(watch?.issueKey, 100);
     if (!issueKey) continue;
     try {
+      // Closed or deleted tickets will never need the approval; stop watching them.
+      if (await issueState(issueKey) !== 'open') {
+        await kvs.delete(formWatchKey(issueKey));
+        continue;
+      }
       const forms = await listIssueForms(issueKey);
       const form = forms.find((item) =>
         clean(item?.id, 300) === clean(watch?.instanceId, 300) ||
