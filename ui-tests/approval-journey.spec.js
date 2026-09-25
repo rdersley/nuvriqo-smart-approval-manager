@@ -48,6 +48,7 @@ function jiraApi(page) {
   return {
     get: (url) => call('GET', url),
     post: (url, options) => call('POST', url, options?.data),
+    put: (url, options) => call('PUT', url, options?.data),
   };
 }
 
@@ -60,27 +61,36 @@ async function approverQuery(api) {
   return user.emailAddress || user.displayName;
 }
 
-async function createTicket(api) {
-  const types = await api.get(`/rest/api/3/issue/createmeta/${PROJECT}/issuetypes`);
-  expect(types.ok(), await types.text()).toBeTruthy();
-  const meta = await types.json();
-  const type = (meta.issueTypes || meta.values || []).find((t) => !t.subtask);
-  expect(type, `No non-subtask issue type in ${PROJECT}`).toBeTruthy();
-  const created = await api.post('/rest/api/3/issue', {
-    data: { fields: {
-      project: { key: PROJECT }, issuetype: { id: type.id },
-      summary: `Smart Approval screenshot run ${new Date().toISOString()}`,
-      labels: ['smart-approval-screenshots'],
-    } },
-  });
-  expect(created.ok(), await created.text()).toBeTruthy();
-  return (await created.json()).key;
-}
+const json = async (response, what) => {
+  expect(response.ok(), `${what}: ${response.status()} ${await response.text()}`).toBeTruthy();
+  return response.json();
+};
 
-async function portalUrl(api, key) {
-  const response = await api.get(`/rest/servicedeskapi/request/${key}`);
-  expect(response.ok(), `${key} is not a JSM request: ${await response.text()}`).toBeTruthy();
-  return (await response.json())._links.web;
+// Raises a real portal request (the plain issue API creates tickets with no
+// request type, which customers cannot open in the portal). Uses the first
+// request type whose required fields are only summary/description.
+async function createTicket(api) {
+  const desks = (await json(await api.get('/rest/servicedeskapi/servicedesk?limit=100'), 'List service desks')).values || [];
+  const desk = desks.find((d) => d.projectKey === PROJECT);
+  expect(desk, `${PROJECT} is not a service desk project`).toBeTruthy();
+  const types = (await json(await api.get(`/rest/servicedeskapi/servicedesk/${desk.id}/requesttype?limit=100`), 'List request types')).values || [];
+  let chosen;
+  for (const type of types) {
+    const fields = (await json(await api.get(`/rest/servicedeskapi/servicedesk/${desk.id}/requesttype/${type.id}/field`), 'Request type fields')).requestTypeFields || [];
+    if (fields.filter((x) => x.required).every((x) => ['summary', 'description'].includes(x.fieldId))) { chosen = type; break; }
+  }
+  expect(chosen, `No request type in ${PROJECT} needs only summary/description`).toBeTruthy();
+  const created = await json(await api.post('/rest/servicedeskapi/request', {
+    data: {
+      serviceDeskId: desk.id, requestTypeId: chosen.id,
+      requestFieldValues: {
+        summary: `Smart Approval screenshot run ${new Date().toISOString()}`,
+        description: 'Created by the UI screenshot workflow (qa/ui-screenshot-journey).',
+      },
+    },
+  }), 'Create request');
+  await api.put(`/rest/api/3/issue/${created.issueKey}`, { data: { update: { labels: [{ add: 'smart-approval-screenshots' }] } } });
+  return { key: created.issueKey, portalLink: created._links.web };
 }
 
 // A new ticket shows an app's issue panel only after it is added from the
@@ -107,8 +117,7 @@ test('agent → portal approver → agent approval journey', async ({ page, brow
   await page.goto(`${BASE}/jira/your-work`, { waitUntil: 'domcontentloaded' });
   const api = jiraApi(page);
   const approver = await approverQuery(api);
-  const key = await createTicket(api);
-  const portalLink = await portalUrl(api, key);
+  const { key, portalLink } = await createTicket(api);
   test.info().annotations.push({ type: 'ticket', description: `${BASE}/browse/${key}` });
 
   await test.step('agent opens the Smart Approval panel', async () => {
