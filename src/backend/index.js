@@ -4,6 +4,7 @@ import { kvs, WhereConditions } from '@forge/kvs';
 import { enrichApproval, resolveDisplayName, stripStoredDisplayName } from './users.js';
 import { run as prepareRuleSuggestion } from './automation.js';
 import { getFormPreview, attachExternalFormToIssue, listIssueForms } from './forms.js';
+import { publishPortalPlusApprovalSnapshot } from './portal-plus-publisher.js';
 
 const resolver = new Resolver();
 const nowIso = () => new Date().toISOString();
@@ -33,6 +34,13 @@ async function queryPrefix(prefix, max = 200) {
     cursor = page?.nextCursor;
   } while (cursor && out.length < max);
   return out.slice(0, max);
+}
+
+async function publishIssueSnapshot(issueKey) {
+  const rows = await queryPrefix(`issue#${issueKey}#`, 200);
+  const records = rows.map((r) => r.value);
+  try { return await publishPortalPlusApprovalSnapshot({ issueKey, records }); }
+  catch (error) { console.warn('Unable to publish Portal+ approval snapshot', error?.message || error); return null; }
 }
 
 async function saveApproval(record) {
@@ -282,6 +290,7 @@ export async function createApprovalHandler({ payload, context = {} }) {
     catch (error) { console.warn('Approval pending transition failed', error?.message || error); }
   }
   if (prepared) await kvs.delete(suggestionKey(issueKey));
+  await publishIssueSnapshot(issueKey);
   return Promise.all(records.map(enrichApproval));
 }
 
@@ -308,6 +317,7 @@ resolver.define('cancelApproval', async ({ payload, context }) => {
   const at = nowIso(); record.status = 'cancelled'; record.updatedAt = at; record.cancelledAt = at;
   record.events = [...(record.events || []), { type: 'cancelled', at, by: context.accountId || 'agent' }];
   await saveApproval(record);
+  await publishIssueSnapshot(record.issueKey);
   const name = await resolveDisplayName(record.approver.accountId);
   await addPublicComment(record.issueKey, `Approval request for ${name} was cancelled.`);
   return enrichApproval(record);
