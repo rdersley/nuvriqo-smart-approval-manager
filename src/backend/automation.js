@@ -1,6 +1,6 @@
 import api, { route } from '@forge/api';
 import { kvs } from '@forge/kvs';
-import { expirePendingForIssue } from './store.js';
+import { expirePendingForIssue, uncoveredApprovers } from './store.js';
 
 const configKey = (projectId) => `config#${projectId}`;
 const suggestionKey = (issueKey) => `suggestion#${issueKey}`;
@@ -88,14 +88,17 @@ export async function run(event) {
   // Rule configuration already stores stable Atlassian account IDs. Do not require an
   // additional Jira user lookup just to prepare the agent form: portal-only JSM customers
   // can be valid approvers even when the Jira user endpoint cannot resolve them here.
-  const approvers = [];
+  const configuredApprovers = [];
   const seen = new Set();
   for (const configured of (Array.isArray(rule.approvers) ? rule.approvers : []).slice(0, 20)) {
     const accountId = clean(configured?.accountId, 200);
     if (!accountId || accountId === 'unknown' || seen.has(accountId)) continue;
     seen.add(accountId);
-    approvers.push({ accountId });
+    configuredApprovers.push({ accountId });
   }
+  // Once the rule's approvers have been asked, there is nothing left to prepare;
+  // without this the panel re-fills with them straight after sending.
+  const approvers = await uncoveredApprovers(issueKey, configuredApprovers);
 
   if (!approvers.length) {
     await kvs.delete(suggestionKey(issueKey));

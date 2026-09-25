@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import ForgeReconciler, { Button, Heading, Inline, Label, Lozenge, Select, Spinner, Stack, Text, TextArea, Textfield, useProductContext } from '@forge/react';
 import { invoke } from '@forge/bridge';
 
@@ -21,6 +21,22 @@ const AgentPanel = () => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [formStatus, setFormStatus] = useState(null);
+  const [defaultsLoaded, setDefaultsLoaded] = useState(false);
+  const [defaultMode, setDefaultMode] = useState('all');
+  // Set once the agent changes the approvers, mode or message. A refresh (the
+  // initial load finishing late, or after a reminder/cancel) must then never
+  // replace their choices with a rule's prepared values.
+  const agentEdited = useRef(false);
+  const edited = (apply) => (value) => { agentEdited.current = true; apply(value); };
+
+  const toOptions = (approvers) => (approvers || []).map((a) => ({ label: a.displayName, value: a.accountId }));
+
+  const applySuggestion = (suggestion, fallbackMode) => {
+    setSelected(toOptions(suggestion?.approvers));
+    setApprovalMode((suggestion ? suggestion.approvalMode : fallbackMode) === 'any' ? modeOptions[1] : modeOptions[0]);
+    setMessage(suggestion?.message || '');
+    agentEdited.current = false;
+  };
 
   const refresh = async () => {
     if (!issueKey) return;
@@ -32,18 +48,13 @@ const AgentPanel = () => {
       ]);
       setApprovals(items || []);
       const suggestion = defaults?.suggestion || null;
-      if (suggestion) {
-        const options = (suggestion.approvers || []).map((a) => ({ label: a.displayName, value: a.accountId }));
-        setSelected(options);
-        setApprovalMode(suggestion.approvalMode === 'any' ? modeOptions[1] : modeOptions[0]);
-        setMessage(suggestion.message || '');
-        setPreparedRule(suggestion);
-        if (suggestion?.formEnabled) setFormStatus(await invoke('getApprovalFormStatus', { issueKey }));
-        else setFormStatus(null);
-      } else if ((selected || []).length === 0) {
-        setApprovalMode(defaults?.defaultApprovalMode === 'any' ? modeOptions[1] : modeOptions[0]);
-        setPreparedRule(null);
-      }
+      const fallbackMode = defaults?.defaultApprovalMode === 'any' ? 'any' : 'all';
+      setDefaultMode(fallbackMode);
+      setPreparedRule(suggestion);
+      if (!agentEdited.current) applySuggestion(suggestion, fallbackMode);
+      if (suggestion?.formEnabled) setFormStatus(await invoke('getApprovalFormStatus', { issueKey }));
+      else setFormStatus(null);
+      setDefaultsLoaded(true);
     } catch (e) { setError(e.message || String(e)); }
     finally { setLoading(false); }
   };
@@ -57,6 +68,7 @@ const AgentPanel = () => {
       setUsers(found || []);
       if ((found || []).length === 1) {
         const option = { label: found[0].displayName, value: found[0].accountId };
+        agentEdited.current = true;
         setSelected((current) => current.some((x) => x.value === option.value) ? current : [...current, option]);
       }
     } catch (e) { setError(e.message || String(e)); }
@@ -85,6 +97,7 @@ const AgentPanel = () => {
         preparedRuleId: preparedRule?.ruleId || '',
       });
       setQuery(''); setUsers([]); setSelected([]); setMessage(''); setPreparedRule(null);
+      agentEdited.current = false;
       await refresh();
     } catch (e) { setError(e.message || String(e)); }
     finally { setBusy(false); }
@@ -110,6 +123,8 @@ const AgentPanel = () => {
   };
 
   const pendingCount = approvals.filter((a) => a.status === 'pending').length;
+  const sameIds = (a, b) => a.length === b.length && a.every((x) => b.some((y) => y.value === x.value));
+  const suggestionOverridden = Boolean(preparedRule) && !sameIds(selected || [], toOptions(preparedRule?.approvers));
 
   return <Stack space="space.300">
     <Stack space="space.100">
@@ -123,19 +138,25 @@ const AgentPanel = () => {
 
     <Stack space="space.150">
       <Heading size="small">1. Choose who should approve</Heading>
-      {preparedRule ? <Stack space="space.050">
+      {!defaultsLoaded ? <Inline space="space.100" alignBlock="center">
+        <Spinner size="small" />
+        <Text>Checking approval rules for this request…</Text>
+      </Inline> : preparedRule ? <Stack space="space.050">
         <Inline space="space.100" alignBlock="center">
           <Lozenge appearance="inprogress">Rule matched</Lozenge>
           <Lozenge appearance="moved">Agent review required</Lozenge>
         </Inline>
-        <Text><Text weight="bold">{preparedRule.ruleName || 'Approval rule'}</Text> matched this ticket and prepared the approvers below.</Text>
-        <Text>Review the approvers and message before sending. Nothing has been sent to the customer yet.</Text>
+        {suggestionOverridden ? <>
+          <Text><Text weight="bold">{preparedRule.ruleName || 'Approval rule'}</Text> suggests: {(preparedRule.approvers || []).map((a) => a.displayName).join(', ')}. Your own selection below will be used.</Text>
+          <Button appearance="subtle" onClick={() => applySuggestion(preparedRule, defaultMode)} isDisabled={busy}>Use suggested approvers</Button>
+        </> : <Text><Text weight="bold">{preparedRule.ruleName || 'Approval rule'}</Text> matched this ticket and prepared the approvers below.</Text>}
+        <Text>Review the approvers and message before sending. Nothing has been sent to these approvers yet.</Text>
       </Stack> : <Text>No rule has prepared approvers for this request. You can select them manually.</Text>}
 
       <Label labelFor="approver-search">Find approvers</Label>
       <Inline space="space.100" alignBlock="center">
         <Textfield id="approver-search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by name or email" />
-        <Button onClick={search} isDisabled={query.trim().length < 2 || busy}>Search</Button>
+        <Button onClick={search} isDisabled={query.trim().length < 2 || busy || !defaultsLoaded}>Search</Button>
       </Inline>
 
       {availableOptions.length ? <Select
@@ -143,10 +164,10 @@ const AgentPanel = () => {
         isMulti
         options={availableOptions}
         value={selected}
-        onChange={(value) => setSelected(value || [])}
+        onChange={edited((value) => setSelected(value || []))}
         placeholder="Choose one or more approvers"
       /> : null}
-      {(selected || []).length > 1 ? <Select label="Approval requirement" options={modeOptions} value={approvalMode} onChange={setApprovalMode} /> : null}
+      {(selected || []).length > 1 ? <Select label="Approval requirement" options={modeOptions} value={approvalMode} onChange={edited(setApprovalMode)} /> : null}
       {(selected || []).length ? <Text><Text weight="bold">{selected.length}</Text> approver{selected.length === 1 ? '' : 's'} selected.</Text> : null}
     </Stack>
 
@@ -168,13 +189,13 @@ const AgentPanel = () => {
     <Stack space="space.150">
       <Heading size="small">2. Add the approval message</Heading>
       <Label labelFor="approval-message">Message to approvers (optional)</Label>
-      <TextArea id="approval-message" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Explain what the customer is being asked to approve" />
+      <TextArea id="approval-message" value={message} onChange={edited((e) => setMessage(e.target.value))} placeholder="Explain what the customer is being asked to approve" />
     </Stack>
 
     <Stack space="space.100">
       <Heading size="small">3. Send for approval</Heading>
       <Text>The customer will only be notified after you send the request.</Text>
-      <Button appearance="primary" onClick={requestApproval} isDisabled={(selected || []).length === 0 || busy || (preparedRule?.formEnabled && !formStatus?.submitted)}>Send approval request</Button>
+      <Button appearance="primary" onClick={requestApproval} isDisabled={!defaultsLoaded || (selected || []).length === 0 || busy || (preparedRule?.formEnabled && !formStatus?.submitted)}>Send approval request</Button>
     </Stack>
 
     <Stack space="space.150">

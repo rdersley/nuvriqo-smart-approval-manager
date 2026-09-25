@@ -6,6 +6,7 @@ import { run as prepareRuleSuggestion } from './automation.js';
 import { getFormPreview, attachExternalFormToIssue, listIssueForms } from './forms.js';
 import {
   addPublicComment, approvalKey, clean, configKey, json, nowIso, publishIssueSnapshot, queryPrefix, resolveGroup, saveApproval, transitionIssue,
+  uncoveredApprovers,
 } from './store.js';
 
 const resolver = new Resolver();
@@ -73,11 +74,14 @@ resolver.define('getApprovalDefaults', async ({ payload }) => {
     }
   }
 
+  // A stored suggestion can predate a request sent without it (e.g. the agent
+  // picked the same people manually), so re-check who is still to be asked.
+  const outstanding = suggestion ? await uncoveredApprovers(issueKey, suggestion.approvers || []) : [];
   let enrichedSuggestion = null;
-  if (suggestion) {
+  if (outstanding.length) {
     enrichedSuggestion = {
       ...suggestion,
-      approvers: await Promise.all((suggestion.approvers || []).map(async (a) => ({
+      approvers: await Promise.all(outstanding.map(async (a) => ({
         accountId: a.accountId,
         displayName: await resolveDisplayName(a.accountId),
       }))),
