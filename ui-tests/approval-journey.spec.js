@@ -54,11 +54,11 @@ function jiraApi(page) {
 
 // The approver defaults to the signed-in test account itself.
 async function approverQuery(api) {
-  if (process.env.APPROVER_EMAIL) return process.env.APPROVER_EMAIL;
+  if (process.env.APPROVER_EMAIL) return { query: process.env.APPROVER_EMAIL, name: '' };
   const me = await api.get('/rest/api/3/myself');
   expect(me.ok(), `Jira session is not signed in (re-create JIRA_STORAGE_STATE_GZIP_B64): ${me.status()}`).toBeTruthy();
   const user = await me.json();
-  return user.emailAddress || user.displayName;
+  return { query: user.emailAddress || user.displayName, name: user.displayName };
 }
 
 const json = async (response, what) => {
@@ -123,14 +123,29 @@ test('agent → portal approver → agent approval journey', async ({ page, brow
   await test.step('agent opens the Smart Approval panel', async () => {
     await page.goto(`${BASE}/browse/${key}`, { waitUntil: 'domcontentloaded' });
     await openPanel(page);
-    await expect(page.getByText(/Prepare, send and track customer approvals/)).toBeVisible();
+    // The panel renders before its data loads; wait for the activity list so a
+    // rule's prepared approvers cannot replace the selection made below.
+    await expect(page.getByText('No approvals have been sent for this ticket yet.')).toBeVisible({ timeout: 60000 });
     await shot(page, 'agent-panel-new-ticket');
   });
 
   await test.step('agent selects the approver and sends the request', async () => {
-    await page.getByPlaceholder('Search by name or email').fill(approver);
+    // Remove approvers a matching rule prepared: the portal steps run as the
+    // signed-in account, so it must be the only approver.
+    const selectedCount = page.getByText(/approvers? selected\./);
+    const approverSelect = page.getByRole('combobox', { name: /Selected approvers/ })
+      .or(page.getByLabel('Selected approvers')).first();
+    for (let i = 0; i < 20 && await selectedCount.isVisible(); i += 1) {
+      await approverSelect.click();
+      await approverSelect.press('Backspace');
+    }
+    await page.keyboard.press('Escape');
+    await expect(selectedCount).toHaveCount(0);
+
+    await page.getByPlaceholder('Search by name or email').fill(approver.query);
     await page.getByRole('button', { name: 'Search', exact: true }).click();
-    await expect(page.getByText(/approvers? selected\./)).toBeVisible({ timeout: 30000 });
+    await expect(selectedCount).toBeVisible({ timeout: 30000 });
+    if (approver.name) await expect(page.getByText(approver.name, { exact: true }).first()).toBeVisible();
     await page.getByPlaceholder('Explain what the customer is being asked to approve')
       .fill('Screenshot run: please approve this test request.');
     await shot(page, 'agent-approver-selected');
