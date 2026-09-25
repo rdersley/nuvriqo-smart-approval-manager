@@ -46,6 +46,7 @@ export function createFakeJira({ issues = {}, users = {}, transitions = {}, form
   const comments = [];
   const applied = [];
   const calls = [];
+  const properties = {};
 
   async function requestJira(path, options = {}) {
     const method = (options.method || 'GET').toUpperCase();
@@ -86,11 +87,15 @@ export function createFakeJira({ issues = {}, users = {}, transitions = {}, form
       return response(201, {});
     }
     if (/^\/rest\/servicedeskapi\/request\/[^/]+\/participant$/.test(url.pathname)) return response(200, {});
+    if ((m = /^\/rest\/api\/3\/issue\/([^/]+)\/properties\/([^/]+)$/.exec(url.pathname)) && method === 'PUT') {
+      properties[`${decodeURIComponent(m[1])}/${decodeURIComponent(m[2])}`] = body;
+      return response(200, {});
+    }
     if ((m = /^\/forms\/issue\/([^/]+)\/form$/.exec(url.pathname)) && method === 'GET') {
       return response(200, forms[decodeURIComponent(m[1])] || []);
     }
     throw new Error(`Unexpected Jira call: ${method} ${url.pathname}`);
   }
 
-  return { issues, comments, applied, calls, requestJira };
+  return { issues, comments, applied, calls, properties, requestJira };
 }

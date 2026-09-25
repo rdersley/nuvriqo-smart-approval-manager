@@ -5,7 +5,7 @@ import { enrichApproval, resolveDisplayName } from './users.js';
 import { run as prepareRuleSuggestion } from './automation.js';
 import { getFormPreview, attachExternalFormToIssue, listIssueForms } from './forms.js';
 import {
-  addPublicComment, approvalKey, clean, configKey, json, nowIso, queryPrefix, resolveGroup, saveApproval, transitionIssue,
+  addPublicComment, approvalKey, clean, configKey, json, nowIso, publishIssueSnapshot, queryPrefix, resolveGroup, saveApproval, transitionIssue,
 } from './store.js';
 
 const resolver = new Resolver();
@@ -227,6 +227,7 @@ export async function createApprovalHandler({ payload, context = {} }) {
     catch (error) { console.warn('Approval pending transition failed', error?.message || error); }
   }
   if (prepared) await kvs.delete(suggestionKey(issueKey));
+  await publishIssueSnapshot(issueKey);
   return Promise.all(records.map(enrichApproval));
 }
 
@@ -259,6 +260,8 @@ resolver.define('cancelApproval', async ({ payload, context }) => {
   // else already approved), so the group outcome must be re-evaluated here too.
   // Never on a closed ticket: the outcome's workflow transition could reopen it.
   if (!isDone(issue)) await resolveGroup(record, (await kvs.get(configKey(record.projectId))) || {});
+  // Published after the group is resolved so the snapshot includes any siblings it closed.
+  await publishIssueSnapshot(record.issueKey);
   return enrichApproval(record);
 });
 

@@ -268,3 +268,50 @@ test('the form worker checks every watch, not just the first 100, and drops watc
   assert.ok(!get('formwatch#SD-900'), 'closed-ticket watch removed');
   assert.ok(get('formwatch#SD-219'), 'unsubmitted open watches are kept');
 });
+
+// Portal+ approval snapshot (issue property read by Portal+)
+
+const snapshot = (issueKey) => jira.properties[`${issueKey}/nuvriqo.smart-approval.portal`];
+const statuses = (issueKey) => Object.fromEntries((snapshot(issueKey)?.approvals || []).map((a) => [a.approverAccountId, a.status]));
+
+test('the Portal+ snapshot follows create, decide and cancel, including siblings closed by the group', async () => {
+  const [a, b, c] = await requestApproval('SD-1', ['cust-a', 'cust-b', 'cust-c'], 'all');
+  assert.deepEqual(statuses('SD-1'), { 'cust-a': 'pending', 'cust-b': 'pending', 'cust-c': 'pending' });
+
+  await call(portal, 'decideApproval', 'cust-a', { approvalId: a.id, decision: 'approved' });
+  await call(portal, 'decideApproval', 'cust-b', { approvalId: b.id, decision: 'approved' });
+  await call(agent, 'cancelApproval', 'agent-1', { approvalId: c.id });
+  assert.deepEqual(statuses('SD-1'), { 'cust-a': 'approved', 'cust-b': 'approved', 'cust-c': 'cancelled' });
+
+  const [x, y] = await requestApproval('SD-2', ['cust-a', 'cust-b'], 'any');
+  await call(portal, 'decideApproval', 'cust-a', { approvalId: x.id, decision: 'approved' });
+  assert.equal(statuses('SD-2')['cust-b'], 'not-required', 'the closed sibling is no longer shown as waiting');
+  assert.ok(y.id);
+});
+
+test('withdrawing approvals on a closed ticket updates the Portal+ snapshot', async () => {
+  await requestApproval('SD-1', ['cust-a', 'cust-b']);
+  const [late] = await requestApproval('SD-2', ['cust-a']);
+  const [overdue] = await requestApproval('SD-3', ['cust-a']);
+
+  await runAutomation({ issue: { key: 'SD-1', fields: { project: { id: PROJECT }, status: { name: 'Closed', statusCategory: { key: 'done' } } } } });
+  assert.deepEqual(statuses('SD-1'), { 'cust-a': 'cancelled', 'cust-b': 'cancelled' });
+
+  Object.assign(jira.issues['SD-2'], CLOSED);
+  await assert.rejects(call(portal, 'decideApproval', 'cust-a', { approvalId: late.id, decision: 'approved' }));
+  assert.deepEqual(statuses('SD-2'), { 'cust-a': 'cancelled' });
+
+  Object.assign(jira.issues['SD-3'], CLOSED);
+  makeOverdue(overdue.id);
+  await runReminders();
+  assert.deepEqual(statuses('SD-3'), { 'cust-a': 'cancelled' });
+});
+
+test('a Portal+ snapshot failure never blocks the approval change', async () => {
+  const original = jira.requestJira;
+  jira.requestJira = async (path, options) => (String(path).includes('/properties/') ? { ok: false, status: 500, text: async () => 'boom' } : original(path, options));
+  const [a] = await requestApproval('SD-1', ['cust-a']);
+  await call(portal, 'decideApproval', 'cust-a', { approvalId: a.id, decision: 'approved' });
+  assert.equal(get(`approval#${a.id}`).status, 'approved');
+  assert.deepEqual(jira.applied, [{ issueKey: 'SD-1', to: 'Approved' }]);
+});

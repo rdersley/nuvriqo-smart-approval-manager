@@ -4,7 +4,7 @@ import { enrichApproval, resolveDisplayName } from './users.js';
 import { writeApprovalAuditToForm } from './forms.js';
 import {
   addPublicComment, approvalKey, clean, configKey, ensurePendingIndex, expireApproval,
-  issueState, loadPending, nowIso, queryPrefix, resolveGroup, saveApproval,
+  issueState, loadPending, nowIso, publishIssueSnapshot, queryPrefix, resolveGroup, saveApproval,
 } from './store.js';
 
 const resolver = new Resolver();
@@ -84,6 +84,7 @@ resolver.define('decideApproval', async ({ payload, context }) => {
   }
 
   await resolveGroup(record, settings);
+  await publishIssueSnapshot(record.issueKey);
   return enrichApproval(record);
 });
 

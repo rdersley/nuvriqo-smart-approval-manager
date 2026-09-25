@@ -1,6 +1,7 @@
 import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
 import { stripStoredDisplayName } from './users.js';
+import { publishPortalPlusApprovalSnapshot } from './portal-plus-publisher.js';
 
 export const clean = (value, max = 1000) => String(value ?? '').trim().slice(0, max);
 export const nowIso = () => new Date().toISOString();
@@ -123,9 +124,19 @@ export async function issueState(issueKey) {
   return issue?.fields?.status?.statusCategory?.key === 'done' ? 'done' : 'open';
 }
 
-// Withdraws a pending approval because its ticket is finished. No public comment:
-// the ticket is already closed and the customer does not need another notification.
-export async function expireApproval(record, reason) {
+// Publishes the customer-safe approval snapshot Portal+ reads. Best-effort: a
+// failure must never undo or block the approval change that triggered it.
+export async function publishIssueSnapshot(issueKey) {
+  try {
+    const records = (await queryPrefix(`issue#${issueKey}#`)).map((r) => r.value);
+    return await publishPortalPlusApprovalSnapshot({ issueKey, records });
+  } catch (error) {
+    console.warn('Unable to publish Portal+ approval snapshot', error?.message || error);
+    return null;
+  }
+}
+
+async function withdraw(record, reason) {
   const at = nowIso();
   record.status = 'cancelled';
   record.cancelReason = reason;
@@ -134,13 +145,21 @@ export async function expireApproval(record, reason) {
   record.nextReminderAt = null;
   record.events = [...(record.events || []), { type: 'expired', at, by: 'system', reason }];
   await saveApproval(record);
+}
+
+// Withdraws a pending approval because its ticket is finished. No public comment:
+// the ticket is already closed and the customer does not need another notification.
+export async function expireApproval(record, reason) {
+  await withdraw(record, reason);
+  await publishIssueSnapshot(record.issueKey);
   return record;
 }
 
 export async function expirePendingForIssue(issueKey, reason) {
   const rows = await queryPrefix(`issue#${issueKey}#`);
   const pending = rows.map((r) => r.value).filter((r) => r?.status === 'pending');
-  for (const record of pending) await expireApproval(record, reason);
+  for (const record of pending) await withdraw(record, reason);
+  if (pending.length) await publishIssueSnapshot(issueKey);
   return pending.length;
 }
 
