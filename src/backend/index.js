@@ -1,56 +1,19 @@
 import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
-import { kvs, WhereConditions } from '@forge/kvs';
-import { enrichApproval, resolveDisplayName, stripStoredDisplayName } from './users.js';
+import { kvs } from '@forge/kvs';
+import { enrichApproval, resolveDisplayName } from './users.js';
 import { run as prepareRuleSuggestion } from './automation.js';
 import { getFormPreview, attachExternalFormToIssue, listIssueForms } from './forms.js';
-import { publishPortalPlusApprovalSnapshot } from './portal-plus-publisher.js';
+import {
+  addPublicComment, approvalKey, clean, configKey, json, nowIso, publishIssueSnapshot, queryPrefix, resolveGroup, saveApproval, transitionIssue,
+  uncoveredApprovers,
+} from './store.js';
 
 const resolver = new Resolver();
-const nowIso = () => new Date().toISOString();
 const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-const approvalKey = (id) => `approval#${id}`;
-const issueIndexKey = (issueKey, createdAt, id) => `issue#${issueKey}#${createdAt}#${id}`;
-const approverIndexKey = (accountId, createdAt, id) => `approver#${accountId}#${createdAt}#${id}`;
-const configKey = (projectId) => `config#${projectId}`;
 const suggestionKey = (issueKey) => `suggestion#${issueKey}`;
 const formWatchKey = (issueKey) => `formwatch#${issueKey}`;
-const clean = (value, max = 1000) => String(value ?? '').trim().slice(0, max);
-
-async function json(response) {
-  const body = await response.text();
-  if (!response.ok) throw new Error(body || `Atlassian API error ${response.status}`);
-  return body ? JSON.parse(body) : null;
-}
-
-async function queryPrefix(prefix, max = 200) {
-  let cursor;
-  const out = [];
-  do {
-    let q = kvs.query().where('key', WhereConditions.beginsWith(prefix)).limit(20);
-    if (cursor) q = q.cursor(cursor);
-    const page = await q.getMany();
-    out.push(...(page?.results || []));
-    cursor = page?.nextCursor;
-  } while (cursor && out.length < max);
-  return out.slice(0, max);
-}
-
-async function publishIssueSnapshot(issueKey) {
-  const rows = await queryPrefix(`issue#${issueKey}#`, 200);
-  const records = rows.map((r) => r.value);
-  try { return await publishPortalPlusApprovalSnapshot({ issueKey, records }); }
-  catch (error) { console.warn('Unable to publish Portal+ approval snapshot', error?.message || error); return null; }
-}
-
-async function saveApproval(record) {
-  const stored = stripStoredDisplayName(record);
-  await Promise.all([
-    kvs.set(approvalKey(stored.id), stored),
-    kvs.set(issueIndexKey(stored.issueKey, stored.createdAt, stored.id), stored),
-    kvs.set(approverIndexKey(stored.approver.accountId, stored.createdAt, stored.id), stored),
-  ]);
-}
+const isDone = (issue) => issue?.fields?.status?.statusCategory?.key === 'done';
 
 async function getIssueAsUser(issueKey) {
   return json(await api.asUser().requestJira(route`/rest/api/3/issue/${issueKey}?fields=summary,project,status,reporter`));
@@ -64,15 +27,6 @@ async function getCanonicalUser(accountId) {
   return json(await api.asApp().requestJira(route`/rest/api/3/user?accountId=${accountId}`));
 }
 
-async function addPublicComment(issueKey, text) {
-  try {
-    await json(await api.asApp().requestJira(route`/rest/servicedeskapi/request/${issueKey}/comment`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ body: text, public: true }),
-    }));
-  } catch (error) { console.warn('Unable to add JSM public comment', error?.message || error); }
-}
-
 async function addParticipant(issueKey, accountId) {
   try {
     await json(await api.asApp().requestJira(route`/rest/servicedeskapi/request/${issueKey}/participant`, {
@@ -81,23 +35,6 @@ async function addParticipant(issueKey, accountId) {
     }));
     return true;
   } catch (error) { console.warn('Unable to add approver as request participant', error?.message || error); return false; }
-}
-
-async function transitionIssue(issueKey, targetStatus, legacyTransitionId) {
-  let transitionId = clean(legacyTransitionId, 100);
-  const target = clean(targetStatus, 200);
-  if (target) {
-    const available = await json(await api.asApp().requestJira(route`/rest/api/3/issue/${issueKey}/transitions?expand=transitions.fields`));
-    const match = (available?.transitions || []).find((t) => clean(t?.to?.name, 200).toLowerCase() === target.toLowerCase());
-    if (!match?.id) throw new Error(`No available Jira transition leads to status “${target}” from the ticket's current status.`);
-    transitionId = String(match.id);
-  }
-  if (!transitionId) return false;
-  await json(await api.asApp().requestJira(route`/rest/api/3/issue/${issueKey}/transitions`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ transition: { id: transitionId } }),
-  }));
-  return true;
 }
 
 resolver.define('searchApprovers', async ({ payload }) => {
@@ -111,7 +48,7 @@ resolver.define('getIssueApprovals', async ({ payload }) => {
   const issueKey = clean(payload?.issueKey, 100);
   if (!issueKey) return [];
   await getIssueAsUser(issueKey);
-  const rows = await queryPrefix(`issue#${issueKey}#`, 200);
+  const rows = await queryPrefix(`issue#${issueKey}#`);
   const records = rows.map((r) => r.value).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   return Promise.all(records.map(enrichApproval));
 });
@@ -137,11 +74,14 @@ resolver.define('getApprovalDefaults', async ({ payload }) => {
     }
   }
 
+  // A stored suggestion can predate a request sent without it (e.g. the agent
+  // picked the same people manually), so re-check who is still to be asked.
+  const outstanding = suggestion ? await uncoveredApprovers(issueKey, suggestion.approvers || []) : [];
   let enrichedSuggestion = null;
-  if (suggestion) {
+  if (outstanding.length) {
     enrichedSuggestion = {
       ...suggestion,
-      approvers: await Promise.all((suggestion.approvers || []).map(async (a) => ({
+      approvers: await Promise.all(outstanding.map(async (a) => ({
         accountId: a.accountId,
         displayName: await resolveDisplayName(a.accountId),
       }))),
@@ -206,10 +146,11 @@ export async function createApprovalHandler({ payload, context = {} }) {
   if (!issueKey || requestedApprovers.length === 0) throw new Error('Issue and at least one approver are required.');
 
   const issue = payload?.system === true ? await getIssueAsApp(issueKey) : await getIssueAsUser(issueKey);
+  if (isDone(issue)) throw new Error('This request is already closed, so approval can no longer be requested.');
   const settings = (await kvs.get(configKey(String(issue.fields.project.id)))) || {};
   const suggestion = await kvs.get(suggestionKey(issueKey));
   const prepared = suggestion && clean(payload?.preparedRuleId, 200) && clean(payload.preparedRuleId, 200) === clean(suggestion.ruleId, 200) ? suggestion : null;
-  const existing = await queryPrefix(`issue#${issueKey}#`, 200);
+  const existing = await queryPrefix(`issue#${issueKey}#`);
   const pendingAccountIds = new Set(existing.map((r) => r.value).filter((r) => r?.status === 'pending').map((r) => r.approver?.accountId));
 
   const canonicalApprovers = [];
@@ -313,13 +254,18 @@ resolver.define('sendReminder', async ({ payload, context }) => {
 resolver.define('cancelApproval', async ({ payload, context }) => {
   const record = await kvs.get(approvalKey(clean(payload?.approvalId, 200)));
   if (!record || record.status !== 'pending') throw new Error('Pending approval not found.');
-  await getIssueAsUser(record.issueKey);
-  const at = nowIso(); record.status = 'cancelled'; record.updatedAt = at; record.cancelledAt = at;
+  const issue = await getIssueAsUser(record.issueKey);
+  const at = nowIso(); record.status = 'cancelled'; record.updatedAt = at; record.cancelledAt = at; record.nextReminderAt = null;
   record.events = [...(record.events || []), { type: 'cancelled', at, by: context.accountId || 'agent' }];
   await saveApproval(record);
-  await publishIssueSnapshot(record.issueKey);
   const name = await resolveDisplayName(record.approver.accountId);
   await addPublicComment(record.issueKey, `Approval request for ${name} was cancelled.`);
+  // Cancelling the last outstanding approver can complete the group (e.g. everyone
+  // else already approved), so the group outcome must be re-evaluated here too.
+  // Never on a closed ticket: the outcome's workflow transition could reopen it.
+  if (!isDone(issue)) await resolveGroup(record, (await kvs.get(configKey(record.projectId))) || {});
+  // Published after the group is resolved so the snapshot includes any siblings it closed.
+  await publishIssueSnapshot(record.issueKey);
   return enrichApproval(record);
 });
 
