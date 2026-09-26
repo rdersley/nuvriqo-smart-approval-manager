@@ -10,6 +10,7 @@ const operatorOptions = [
   { label: 'Equals', value: 'equals' },
   { label: 'Does not equal', value: 'notEquals' },
   { label: 'Contains', value: 'contains' },
+  { label: 'Is any of', value: 'isAnyOf' },
   { label: 'Is empty', value: 'isEmpty' },
   { label: 'Is not empty', value: 'notEmpty' },
 ];
@@ -22,6 +23,10 @@ const newRule = (number) => ({
   conditions: [{ fieldId: 'issuetype', operator: 'equals', value: '' }],
   approvers: [],
   message: 'Please review and approve this request.',
+  formEnabled: false,
+  autoSendOnFormSubmit: false,
+  formId: '',
+  formFieldKeys: [],
   reminderHours: 24,
   pendingTargetStatus: '', approveTargetStatus: '', declineTargetStatus: '',
 });
@@ -32,6 +37,8 @@ const Settings = () => {
   const [settings, setSettings] = useState(null);
   const [fields, setFields] = useState([]);
   const [statuses, setStatuses] = useState([]);
+  const [projectForms, setProjectForms] = useState([]);
+  const [formFields, setFormFields] = useState({});
   const [commonOptions, setCommonOptions] = useState({});
   const [fieldOptions, setFieldOptions] = useState({});
   const [message, setMessage] = useState('');
@@ -47,11 +54,13 @@ const Settings = () => {
     Promise.all([
       invoke('getSettings', { projectId }),
       invoke('getRuleBuilderMetadata', { projectId }),
-    ]).then(([value, meta]) => {
+      invoke('getProjectForms', { projectId }),
+    ]).then(([value, meta, forms]) => {
       setSettings(value);
       setFields(meta?.fields || []);
       setStatuses(meta?.statuses || []);
       setCommonOptions(meta?.commonOptions || {});
+      setProjectForms(forms || []);
     }).catch((e) => setMessage(e.message || String(e)));
   }, [projectId]);
 
@@ -71,7 +80,7 @@ const Settings = () => {
     const trigger = rule.triggerStatus ? `At ${rule.triggerStatus}: ` : '';
     const conditions = (rule.conditions || []).filter((c) => c.fieldId).map((c) => {
       if (c.operator === 'isEmpty' || c.operator === 'notEmpty') return `${getFieldName(c.fieldId)} ${getOperatorName(c.operator)}`;
-      return `${getFieldName(c.fieldId)} ${getOperatorName(c.operator)} ${c.value || '…'}`;
+      return `${getFieldName(c.fieldId)} ${getOperatorName(c.operator)} ${c.operator === 'isAnyOf' ? ((c.values || []).join(', ') || '…') : (c.value || '…')}`;
     }).join(' AND ');
     const approvers = (rule.approvers || []).map((a) => a.displayName).join(', ') || 'no approvers selected';
     const mode = rule.approvalMode === 'any' ? 'any one can approve' : 'all must approve';
@@ -89,6 +98,16 @@ const Settings = () => {
       setFieldOptions((prev) => ({ ...prev, [key]: options || [] }));
     } catch {
       setFieldOptions((prev) => ({ ...prev, [key]: [] }));
+    }
+  };
+
+  const loadFormFields = async (formId) => {
+    if (!formId || formFields[formId]) return;
+    try {
+      const rows = await invoke('getProjectFormFields', { projectId, formId });
+      setFormFields((prev) => ({ ...prev, [formId]: rows || [] }));
+    } catch (e) {
+      setMessage(e.message || String(e));
     }
   };
 
@@ -251,20 +270,34 @@ const Settings = () => {
                     placeholder="Choose Jira field"
                     onChange={(v) => {
                       const fieldId = v?.value || '';
-                      updateCondition(ruleIndex, conditionIndex, { fieldId, value: '' });
+                      updateCondition(ruleIndex, conditionIndex, { fieldId, value: '', values: [] });
                       loadOptions(fieldId, `${rule.id}:${conditionIndex}:${fieldId}`);
                     }}
                   />
                   <Select options={operatorOptions} value={operatorOptions.find((o) => o.value === condition.operator) || operatorOptions[0]} onChange={(v) => updateCondition(ruleIndex, conditionIndex, { operator: v?.value || 'equals' })} />
-                  {!['isEmpty', 'notEmpty'].includes(condition.operator) ? (options.length ?
-                    <Select options={options} value={condition.value ? { label: condition.value, value: condition.value } : null} placeholder="Choose value" onChange={(v) => updateCondition(ruleIndex, conditionIndex, { value: v?.value || '' })} /> :
-                    <Textfield value={condition.value || ''} placeholder="Value to match" onChange={(e) => updateCondition(ruleIndex, conditionIndex, { value: e.target.value })} />
+                  {!['isEmpty', 'notEmpty'].includes(condition.operator) ? (
+                    condition.operator === 'isAnyOf' ? (
+                      options.length ? <Select
+                        isMulti
+                        options={options}
+                        value={(condition.values || []).map((value) => ({ label: value, value }))}
+                        placeholder="Choose one or more allowed values"
+                        onChange={(items) => updateCondition(ruleIndex, conditionIndex, { values: (items || []).map((item) => item.value), value: '' })}
+                      /> : <Textfield
+                        value={(condition.values || []).join(', ')}
+                        placeholder="Allowed values, separated by commas"
+                        onChange={(e) => updateCondition(ruleIndex, conditionIndex, { values: e.target.value.split(',').map((value) => value.trim()).filter(Boolean), value: '' })}
+                      />
+                    ) : (options.length ?
+                      <Select options={options} value={condition.value ? { label: condition.value, value: condition.value } : null} placeholder="Choose value" onChange={(v) => updateCondition(ruleIndex, conditionIndex, { value: v?.value || '', values: [] })} /> :
+                      <Textfield value={condition.value || ''} placeholder="Value to match" onChange={(e) => updateCondition(ruleIndex, conditionIndex, { value: e.target.value, values: [] })} />
+                    )
                   ) : null}
                 </Inline>
                 <Button appearance="subtle" onClick={() => updateRule(ruleIndex, { conditions: rule.conditions.filter((_, i) => i !== conditionIndex) })}>Remove condition</Button>
               </Stack>;
             })}
-            <Button appearance="subtle" onClick={() => updateRule(ruleIndex, { conditions: [...(rule.conditions || []), { fieldId: '', operator: 'equals', value: '' }] })}>Add condition</Button>
+            <Button appearance="subtle" onClick={() => updateRule(ruleIndex, { conditions: [...(rule.conditions || []), { fieldId: '', operator: 'equals', value: '', values: [] }] })}>Add condition</Button>
 
             <Heading size="small">Approvers</Heading>
             {(rule.approvers || []).length === 0 ? <Text>No approvers selected.</Text> : (rule.approvers || []).map((a) =>
@@ -275,6 +308,65 @@ const Settings = () => {
               <Button onClick={() => findApprovers(ruleIndex)} isDisabled={(searchText[ruleIndex] || '').trim().length < 2}>Search</Button>
             </Inline>
             {(searchResults[ruleIndex] || []).length ? <Select placeholder="Choose approver to add" options={searchResults[ruleIndex].map((u) => ({ label: u.displayName, value: u.accountId }))} onChange={(v) => addApprover(ruleIndex, v?.value)} /> : null}
+
+            <Heading size="small">Approval form</Heading>
+            <Checkbox isChecked={rule.formEnabled === true} onChange={(e) => updateRule(ruleIndex, { formEnabled: e.target.checked })} label="Include submitted JSM Form details with this approval" />
+            {rule.formEnabled ? <Stack space="space.100">
+              <Text>The requester completes the native JSM Form in the customer portal. Smart Approval captures the submitted answers when the approval is sent.</Text>
+              <Checkbox
+                isChecked={rule.autoSendOnFormSubmit === true}
+                onChange={(e) => updateRule(ruleIndex, { autoSendOnFormSubmit: e.target.checked })}
+                label="Automatically send approval when the customer submits this form"
+              />
+              {rule.autoSendOnFormSubmit ? <Text>After the agent sends the form, Smart Approval monitors it and sends the prepared approval automatically after submission. No second agent action is required.</Text> : <Text>After form submission, an agent sends the prepared approval manually.</Text>}
+              <Label labelFor={`form-id-${ruleIndex}`}>JSM Form</Label>
+              <Select
+                inputId={`form-id-${ruleIndex}`}
+                options={projectForms.map((form) => ({ label: form.name, value: form.id }))}
+                value={rule.formId ? { label: projectForms.find((form) => form.id === rule.formId)?.name || rule.formId, value: rule.formId } : null}
+                placeholder="Choose a form from this service project"
+                onChange={(v) => {
+                  const formId = v?.value || '';
+                  updateRule(ruleIndex, { formId, formFieldKeys: [] });
+                  loadFormFields(formId);
+                }}
+              />
+              {rule.formId ? <Stack space="space.075">
+                <Label labelFor={`form-fields-${ruleIndex}`}>Fields visible to approvers</Label>
+                <Text>Select the submitted answers the approver needs to make a decision.</Text>
+                {(formFields[rule.formId] || []).length === 0 ? <Button appearance="subtle" onClick={() => loadFormFields(rule.formId)}>Load form fields</Button> : (formFields[rule.formId] || []).map((field) =>
+                  <Checkbox
+                    key={field.key}
+                    isChecked={(rule.formFieldKeys || []).includes(field.key)}
+                    onChange={(e) => {
+                      const current = rule.formFieldKeys || [];
+                      updateRule(ruleIndex, { formFieldKeys: e.target.checked ? [...current, field.key] : current.filter((key) => key !== field.key) });
+                    }}
+                    label={field.label}
+                  />
+                )}
+              </Stack> : null}
+              <Text>Only explicitly selected submitted answers are copied into the approval snapshot. If no fields are selected, no form answers are exposed to approvers.</Text>
+              {rule.formId && (formFields[rule.formId] || []).length > 0 ? <Stack space="space.075">
+                <Heading size="xsmall">Write approval result onto the form</Heading>
+                <Text>Optionally map dedicated form questions for the electronic approval record.</Text>
+                {[
+                  ['approvedByFieldKey', 'Approved by'],
+                  ['approvedAtFieldKey', 'Date approved'],
+                  ['decisionFieldKey', 'Decision'],
+                  ['decisionCommentFieldKey', 'Approval comment'],
+                ].map(([property, label]) => <Stack key={property} space="space.050">
+                  <Label labelFor={`${property}-${ruleIndex}`}>{label}</Label>
+                  <Select
+                    inputId={`${property}-${ruleIndex}`}
+                    options={(formFields[rule.formId] || []).map((field) => ({ label: field.label, value: field.key }))}
+                    value={rule[property] ? { label: (formFields[rule.formId] || []).find((field) => field.key === rule[property])?.label || rule[property], value: rule[property] } : null}
+                    placeholder="Do not write this value to the form"
+                    onChange={(v) => updateRule(ruleIndex, { [property]: v?.value || '' })}
+                  />
+                </Stack>)}
+              </Stack> : null}
+            </Stack> : null}
 
             <Heading size="small">Approval request</Heading>
             <Label labelFor={`mode-${ruleIndex}`}>Approval requirement</Label>

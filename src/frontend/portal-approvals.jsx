@@ -52,6 +52,11 @@ const PortalApprovals = () => {
           <Text>{requirementText(a)}</Text>
           {a.ruleName ? <Text><Text weight="bold">Approval rule:</Text> {a.ruleName}</Text> : null}
           {a.message ? <Text><Text weight="bold">Message from the agent:</Text> {a.message}</Text> : null}
+          {a.formSnapshot?.answers?.length ? <Stack space="space.050">
+            <Heading size="small">Submitted form: {a.formSnapshot.name || 'Request form'}</Heading>
+            {a.formSnapshot.answers.map((row, index) => <Text key={`${a.id}-form-${index}`}><Text weight="bold">{row.label || row.fieldKey}:</Text> {row.answer || '—'}</Text>)}
+            <Text>Form details captured when this approval was sent.</Text>
+          </Stack> : null}
           <Text><Text weight="bold">Decision comment</Text> — optional when approving and used as the decline reason when required.</Text>
           <TextArea
             value={reasons[a.id] || ''}
