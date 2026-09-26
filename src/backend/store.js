@@ -155,6 +155,16 @@ export async function expireApproval(record, reason) {
   return record;
 }
 
+// Drops approvers who already have an open or approved request on this issue,
+// so a rule stops re-suggesting people who have been asked. Approvers who
+// declined or were cancelled can be suggested again.
+const COVERED = new Set(['pending', 'approved', 'not-required']);
+export async function uncoveredApprovers(issueKey, approvers = []) {
+  const rows = await queryPrefix(`issue#${issueKey}#`);
+  const covered = new Set(rows.map((r) => r.value).filter((r) => COVERED.has(r?.status)).map((r) => r.approver?.accountId));
+  return approvers.filter((a) => a?.accountId && !covered.has(a.accountId));
+}
+
 export async function expirePendingForIssue(issueKey, reason) {
   const rows = await queryPrefix(`issue#${issueKey}#`);
   const pending = rows.map((r) => r.value).filter((r) => r?.status === 'pending');
