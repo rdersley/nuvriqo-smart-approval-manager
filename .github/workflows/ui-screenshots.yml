@@ -3,32 +3,32 @@ name: UI Screenshots (Nuvriqo)
 # Photographs the Smart Approval build already deployed to the Forge
 # development environment, on the Nuvriqo test site only. This workflow never
 # deploys: development is shared with the work site installation.
+# Remote Forge QA calls it after every successful development deploy; it can
+# also be run by hand.
 on:
-  push:
-    branches: [qa/ui-screenshot-journey]
-    paths: [ui-tests/**, playwright.config.cjs, .github/workflows/ui-screenshots.yml]
+  workflow_call:
+    inputs:
+      approver_email:
+        type: string
+        required: false
+        default: ''
   workflow_dispatch:
     inputs:
       approver_email:
         description: Approver email or name (blank = the signed-in test account)
         required: false
         default: ''
-  workflow_run:
-    workflows: [Remote Forge QA]
-    types: [completed]
-    branches: [main, feature/jsm-forms-integration]
-
-concurrency:
-  group: smart-approval-ui-screenshots
-  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
   screenshots:
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    # One run at a time: each run creates and approves a ticket on nuvriqo.
+    concurrency:
+      group: smart-approval-ui-screenshots
+      cancel-in-progress: false
     timeout-minutes: 20
     env:
       JIRA_BASE_URL: https://nuvriqo.atlassian.net
