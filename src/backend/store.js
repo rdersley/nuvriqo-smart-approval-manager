@@ -2,6 +2,8 @@ import api, { route } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
 import { stripStoredDisplayName } from './users.js';
 import { publishPortalPlusApprovalSnapshot } from './portal-plus-publisher.js';
+// Circular with account-forms.js; only used inside functions, never at load.
+import { settleAccountForms } from './account-forms.js';
 
 export const clean = (value, max = 1000) => String(value ?? '').trim().slice(0, max);
 export const nowIso = () => new Date().toISOString();
@@ -215,6 +217,17 @@ export async function resolveGroup(record, settings) {
   record.groupOutcome = outcome;
   record.updatedAt = nowIso();
   await saveApproval(record);
+
+  // One approval per account form: report this account's result, and let the
+  // ticket move on only once every account form on it has been decided.
+  if (record.perAccountForm) {
+    if (outcome !== 'pending') {
+      await closeRedundantPending(records.filter((r) => r.id !== record.id), outcome);
+      await addPublicComment(record.issueKey, `Approval for ${record.formAccountLabel || 'this account form'}: ${outcome}.`);
+    }
+    await settleAccountForms(record, settings);
+    return outcome;
+  }
   if (outcome === 'pending') return outcome;
 
   await closeRedundantPending(records.filter((r) => r.id !== record.id), outcome);

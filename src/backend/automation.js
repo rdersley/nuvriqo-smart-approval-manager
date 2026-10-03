@@ -97,8 +97,10 @@ export async function run(event) {
     configuredApprovers.push({ accountId });
   }
   // Once the rule's approvers have been asked, there is nothing left to prepare;
-  // without this the panel re-fills with them straight after sending.
-  const approvers = await uncoveredApprovers(issueKey, configuredApprovers);
+  // without this the panel re-fills with them straight after sending. With one
+  // form per account the same approvers are asked again for every account form.
+  const formPerAccount = rule.formEnabled === true && rule.formPerAccount === true;
+  const approvers = formPerAccount ? configuredApprovers : await uncoveredApprovers(issueKey, configuredApprovers);
 
   if (!approvers.length) {
     await kvs.delete(suggestionKey(issueKey));
@@ -118,6 +120,8 @@ export async function run(event) {
     message: clean(rule.message || '', 2000),
     formEnabled: rule.formEnabled === true,
     autoSendOnFormSubmit: rule.autoSendOnFormSubmit === true,
+    formPerAccount,
+    formAccountFieldKey: clean(rule.formAccountFieldKey, 300),
     formId: clean(rule.formId, 300),
     formFieldKeys: (Array.isArray(rule.formFieldKeys) ? rule.formFieldKeys : []).slice(0, 50).map((x) => clean(x, 300)).filter(Boolean),
     approvedByFieldKey: clean(rule.approvedByFieldKey, 300),

@@ -4,6 +4,7 @@ import { kvs } from '@forge/kvs';
 import { enrichApproval, resolveDisplayName } from './users.js';
 import { run as prepareRuleSuggestion } from './automation.js';
 import { getFormPreview, attachExternalFormToIssue, listIssueForms } from './forms.js';
+import { MAX_ACCOUNT_FORMS, accountFormStatus, accountLabel, attachAccountForm } from './account-forms.js';
 import {
   addPublicComment, approvalKey, clean, configKey, json, nowIso, publishIssueSnapshot, queryPrefix, resolveGroup, saveApproval, transitionIssue,
   uncoveredApprovers,
@@ -76,7 +77,10 @@ resolver.define('getApprovalDefaults', async ({ payload }) => {
 
   // A stored suggestion can predate a request sent without it (e.g. the agent
   // picked the same people manually), so re-check who is still to be asked.
-  const outstanding = suggestion ? await uncoveredApprovers(issueKey, suggestion.approvers || []) : [];
+  // With one form per account the same approvers are asked once per form.
+  const outstanding = !suggestion ? []
+    : suggestion.formPerAccount ? suggestion.approvers || []
+    : await uncoveredApprovers(issueKey, suggestion.approvers || []);
   let enrichedSuggestion = null;
   if (outstanding.length) {
     enrichedSuggestion = {
@@ -101,6 +105,14 @@ resolver.define('getApprovalFormStatus', async ({ payload }) => {
   await getIssueAsUser(issueKey);
   const suggestion = await kvs.get(suggestionKey(issueKey));
   if (!suggestion?.formEnabled || !suggestion?.formId) return { configured: false };
+  if (suggestion.formPerAccount) {
+    return {
+      configured: true, perAccount: true, max: MAX_ACCOUNT_FORMS,
+      ruleName: clean(suggestion.ruleName, 200), formId: clean(suggestion.formId, 300),
+      autoSend: suggestion.autoSendOnFormSubmit === true,
+      forms: await accountFormStatus(issueKey, suggestion),
+    };
+  }
   const forms = await listIssueForms(issueKey);
   const existing = forms.find((form) => clean(form?.formTemplate?.id || form?.id, 300) === clean(suggestion.formId, 300));
   return {
@@ -124,6 +136,14 @@ resolver.define('sendApprovalFormToCustomer', async ({ payload }) => {
   await prepareRuleSuggestion({ issue: { key: issueKey, fields: { project: { id: String(issue.fields.project.id) } } } });
   const suggestion = await kvs.get(suggestionKey(issueKey));
   if (!suggestion?.formEnabled || !suggestion?.formId) throw new Error('This request no longer matches a rule that allows this JSM Form.');
+  if (suggestion.formPerAccount) {
+    // Each click adds one more copy: one form (and later one approval) per account.
+    const attached = await attachAccountForm({ issueKey, projectId: String(issue.fields.project.id), suggestion });
+    if (attached.firstForm) {
+      await addPublicComment(issueKey, 'A separate form is required for each user account on this request. Please open this request in the customer portal and complete one form per account. Use "Add a form for another account" there if you need more forms.');
+    }
+    return { attached: true, alreadyAttached: false, ...attached };
+  }
   const forms = await listIssueForms(issueKey);
   const existing = forms.find((form) => clean(form?.formTemplate?.id || form?.id, 300) === clean(suggestion.formId, 300));
   if (existing) {
@@ -150,8 +170,26 @@ export async function createApprovalHandler({ payload, context = {} }) {
   const settings = (await kvs.get(configKey(String(issue.fields.project.id)))) || {};
   const suggestion = await kvs.get(suggestionKey(issueKey));
   const prepared = suggestion && clean(payload?.preparedRuleId, 200) && clean(payload.preparedRuleId, 200) === clean(suggestion.ruleId, 200) ? suggestion : null;
-  const existing = await queryPrefix(`issue#${issueKey}#`);
-  const pendingAccountIds = new Set(existing.map((r) => r.value).filter((r) => r?.status === 'pending').map((r) => r.approver?.accountId));
+  const existing = (await queryPrefix(`issue#${issueKey}#`)).map((r) => r.value);
+
+  // One form per account: each approval belongs to exactly one submitted copy
+  // of the form, and the same approver may approve every copy.
+  const formInstanceId = clean(payload?.formInstanceId, 300);
+  const perAccount = prepared?.formEnabled === true && prepared?.formPerAccount === true;
+  let accountPreview = null;
+  if (perAccount) {
+    if (!formInstanceId) throw new Error('Choose which account form this approval is for.');
+    if (existing.some((r) => clean(r?.formSnapshot?.instanceId, 300) === formInstanceId && ['pending', 'approved', 'not-required'].includes(r.status))) {
+      throw new Error('This account form already has an approval.');
+    }
+    accountPreview = await getFormPreview(issueKey, prepared.formId, formInstanceId);
+    if (!accountPreview || clean(accountPreview.formId, 300) !== clean(prepared.formId, 300)) throw new Error('That account form is not on this request.');
+    if (!accountPreview.submitted) throw new Error('The customer has not submitted this account form yet.');
+  }
+  const formAccountLabel = perAccount ? accountLabel(accountPreview.answers, prepared.formAccountFieldKey) : '';
+  const pendingAccountIds = new Set(existing
+    .filter((r) => r?.status === 'pending' && (!perAccount || clean(r?.formSnapshot?.instanceId, 300) === formInstanceId))
+    .map((r) => r.approver?.accountId));
 
   const canonicalApprovers = [];
   const seen = new Set();
@@ -176,7 +214,7 @@ export async function createApprovalHandler({ payload, context = {} }) {
   let formSnapshot = null;
   try {
     if (prepared?.formEnabled === true) {
-      const preview = await getFormPreview(issueKey, prepared?.formId || '');
+      const preview = accountPreview || await getFormPreview(issueKey, prepared?.formId || '');
       if (preview?.submitted && Array.isArray(preview.answers)) {
         const allowedKeys = Array.isArray(prepared?.formFieldKeys) ? new Set(prepared.formFieldKeys.map((x) => clean(x, 300))) : null;
         // Prefer the administrator's explicit field selection. For a form-enabled
@@ -211,6 +249,7 @@ export async function createApprovalHandler({ payload, context = {} }) {
       ruleId: prepared ? clean(prepared.ruleId, 200) : '',
       ruleName: prepared ? clean(prepared.ruleName, 200) : '',
       message: clean(payload?.message, 2000), formSnapshot, status: 'pending', createdAt, updatedAt: createdAt,
+      perAccountForm: perAccount, formAccountLabel,
       reminderHours, reminderCount: 0, nextReminderAt: new Date(Date.now() + reminderHours * 3600000).toISOString(),
       ruleTargetStatuses: { approved: approvedTarget, declined: declinedTarget },
       ruleTransitionIds: { approved: approvedTransition, declined: declinedTransition },
@@ -222,7 +261,8 @@ export async function createApprovalHandler({ payload, context = {} }) {
 
   const names = canonicalApprovers.map((u) => clean(u.displayName, 200) || 'Approver').join(', ');
   const modeText = records.length > 1 ? (approvalMode === 'all' ? ' All approvers must approve.' : ' Any one approver can approve.') : '';
-  await addPublicComment(issueKey, `Approval requested from ${names}.${modeText} Please open My Approvals in the customer portal to review this request.`);
+  const forAccount = formAccountLabel ? ` for ${formAccountLabel}` : '';
+  await addPublicComment(issueKey, `Approval requested from ${names}${forAccount}.${modeText} Please open My Approvals in the customer portal to review this request.`);
 
   const pendingTarget = clean(prepared?.pendingTargetStatus || settings.pendingTargetStatus, 200);
   const pendingTransition = clean(prepared?.pendingTransitionId || settings.pendingTransitionId, 100);
@@ -230,7 +270,8 @@ export async function createApprovalHandler({ payload, context = {} }) {
     try { await transitionIssue(issueKey, pendingTarget, pendingTransition); }
     catch (error) { console.warn('Approval pending transition failed', error?.message || error); }
   }
-  if (prepared) await kvs.delete(suggestionKey(issueKey));
+  // Account-form rules stay prepared: further account forms still need approvals.
+  if (prepared && !perAccount) await kvs.delete(suggestionKey(issueKey));
   await publishIssueSnapshot(issueKey);
   return Promise.all(records.map(enrichApproval));
 }

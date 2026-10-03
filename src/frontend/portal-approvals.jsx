@@ -49,6 +49,7 @@ const PortalApprovals = () => {
             <Lozenge appearance="inprogress">Decision required</Lozenge>
           </Inline>
           <Text>Requested {new Date(a.createdAt).toLocaleString()}</Text>
+          {a.formAccountLabel ? <Text><Text weight="bold">Account:</Text> {a.formAccountLabel}</Text> : null}
           <Text>{requirementText(a)}</Text>
           {a.ruleName ? <Text><Text weight="bold">Approval rule:</Text> {a.ruleName}</Text> : null}
           {a.message ? <Text><Text weight="bold">Message from the agent:</Text> {a.message}</Text> : null}
@@ -76,7 +77,7 @@ const PortalApprovals = () => {
       {history.length === 0 ? <Text>No previous approval decisions yet.</Text> : history.slice(0, 50).map((a) =>
         <Stack key={a.id} space="space.050">
           <Inline space="space.100" alignBlock="center">
-            <Text><Text weight="bold">{a.issueKey}</Text> — {a.summary}</Text>
+            <Text><Text weight="bold">{a.issueKey}</Text> — {a.summary}{a.formAccountLabel ? ` · ${a.formAccountLabel}` : ''}</Text>
             <Lozenge appearance={a.status === 'approved' ? 'success' : a.status === 'declined' ? 'removed' : 'default'}>{a.status === 'approved' ? 'Approved' : a.status === 'declined' ? 'Declined' : a.status}</Lozenge>
           </Inline>
           <Text>{a.decidedAt ? new Date(a.decidedAt).toLocaleString() : new Date(a.updatedAt).toLocaleString()}{a.decisionReason ? ` · ${a.decisionReason}` : ''}</Text>

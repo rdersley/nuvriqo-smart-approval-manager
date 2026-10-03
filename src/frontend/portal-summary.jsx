@@ -69,6 +69,7 @@ const PortalSummary = () => {
           <Text><Text weight="bold">{a.issueKey}</Text> — {a.summary}</Text>
           <Lozenge appearance="inprogress">Waiting</Lozenge>
         </Inline>
+        {a.formAccountLabel ? <Text><Text weight="bold">Account:</Text> {a.formAccountLabel}</Text> : null}
         <Text>{requirement}</Text>
 
         <Button appearance="subtle" onClick={() => setExpanded((current) => ({ ...current, [a.id]: !current[a.id] }))}>

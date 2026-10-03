@@ -56,11 +56,18 @@ export async function getSimplifiedFormAnswers(issueKey, formId) {
   })).filter((row) => row.label || row.fieldKey);
 }
 
-export async function getFormPreview(issueKey, preferredFormId = '') {
+// With wantedInstanceId, reads exactly that copy of a form (a ticket can carry
+// several copies of one template, e.g. one per account); otherwise the first
+// copy of the preferred template.
+export async function getFormPreview(issueKey, preferredFormId = '', wantedInstanceId = '') {
   const forms = await listIssueForms(issueKey);
   if (!forms.length) return null;
   const preferred = clean(preferredFormId, 300);
-  const selected = (preferred && forms.find((f) => clean(f?.formTemplate?.id || f?.id, 300) === preferred)) || forms[0];
+  const wanted = clean(wantedInstanceId, 300);
+  const selected = wanted
+    ? forms.find((f) => clean(f?.id, 300) === wanted)
+    : (preferred && forms.find((f) => clean(f?.formTemplate?.id || f?.id, 300) === preferred)) || forms[0];
+  if (!selected) return null;
   const instanceId = clean(selected?.id, 300);
   if (!instanceId) return null;
   const answers = await getSimplifiedFormAnswers(issueKey, instanceId);
