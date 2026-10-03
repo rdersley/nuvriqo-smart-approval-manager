@@ -14,6 +14,29 @@ const resolver = new Resolver();
 const HISTORY_LIMIT = 50;
 const byNewest = (a, b) => b.createdAt.localeCompare(a.createdAt);
 
+// The portal summary card can be limited per project (Configuration → Portal card).
+// The portal only tells us its service desk ID, so map it to the project (cached).
+export const PORTAL_CARD_MODES = ['always', 'pending', 'never'];
+async function projectForPortal(portalId) {
+  if (!/^\d+$/.test(portalId)) return '';
+  const key = `portal-project#${portalId}`;
+  const cached = await kvs.get(key);
+  if (cached) return String(cached);
+  try {
+    const desk = await json(await api.asApp().requestJira(route`/rest/servicedeskapi/servicedesk/${portalId}`, { headers: { Accept: 'application/json' } }));
+    const projectId = clean(desk?.projectId, 100);
+    if (projectId) await kvs.set(key, projectId);
+    return projectId;
+  } catch (_) { return ''; }
+}
+
+resolver.define('getPortalCardMode', async ({ context }) => {
+  const projectId = await projectForPortal(clean(context?.extension?.portal?.id, 30));
+  if (!projectId) return { mode: 'always' };
+  const settings = (await kvs.get(configKey(projectId))) || {};
+  return { mode: PORTAL_CARD_MODES.includes(settings.portalCard) ? settings.portalCard : 'always' };
+});
+
 resolver.define('getMyApprovals', async ({ payload, context }) => {
   if (!context.accountId) throw new Error('You must be signed in to view approvals.');
   await ensurePendingIndex();
