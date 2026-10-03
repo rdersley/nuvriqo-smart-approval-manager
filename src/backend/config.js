@@ -2,6 +2,7 @@ import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 import { kvs } from '@forge/kvs';
 import { resolveDisplayName } from './users.js';
+import { listProjectForms, getProjectForm, projectFormFields } from './forms.js';
 
 const resolver = new Resolver();
 const configKey = (projectId) => `config#${projectId}`;
@@ -41,14 +42,23 @@ function cleanRules(rules) {
     approvalMode: rule?.approvalMode === 'any' ? 'any' : 'all',
     conditions: (Array.isArray(rule?.conditions) ? rule.conditions : []).slice(0, 10).map((c) => ({
       fieldId: clean(c?.fieldId, 200),
-      operator: ['equals', 'notEquals', 'contains', 'isEmpty', 'notEmpty'].includes(c?.operator) ? c.operator : 'equals',
+      operator: ['equals', 'notEquals', 'contains', 'isEmpty', 'notEmpty', 'isAnyOf'].includes(c?.operator) ? c.operator : 'equals',
       value: clean(c?.value, 1000),
+      values: (Array.isArray(c?.values) ? c.values : []).slice(0, 50).map((v) => clean(v, 1000)).filter(Boolean),
     })).filter((c) => c.fieldId),
     // Persist only stable Atlassian account IDs; resolve display names when settings are read.
     approvers: (Array.isArray(rule?.approvers) ? rule.approvers : []).slice(0, 20).map((a) => ({
       accountId: clean(a?.accountId, 200),
     })).filter((a) => a.accountId && a.accountId !== 'unknown'),
     message: clean(rule?.message, 2000),
+    formEnabled: rule?.formEnabled === true,
+    autoSendOnFormSubmit: rule?.autoSendOnFormSubmit === true,
+    formId: clean(rule?.formId, 300),
+    formFieldKeys: (Array.isArray(rule?.formFieldKeys) ? rule.formFieldKeys : []).slice(0, 50).map((x) => clean(x, 300)).filter(Boolean),
+      approvedByFieldKey: clean(rule?.approvedByFieldKey, 300),
+      approvedAtFieldKey: clean(rule?.approvedAtFieldKey, 300),
+      decisionFieldKey: clean(rule?.decisionFieldKey, 300),
+      decisionCommentFieldKey: clean(rule?.decisionCommentFieldKey, 300),
     reminderHours: Math.min(720, Math.max(1, Number(rule?.reminderHours || 24))),
     pendingTargetStatus: clean(rule?.pendingTargetStatus, 200),
     approveTargetStatus: clean(rule?.approveTargetStatus, 200),
@@ -128,6 +138,28 @@ resolver.define('getRuleBuilderMetadata', async ({ payload }) => {
       status: [...statusMap.values()].sort((a, b) => a.label.localeCompare(b.label)),
     },
   };
+});
+
+resolver.define('getProjectForms', async ({ payload }) => {
+  const projectId = clean(payload?.projectId, 100);
+  if (!projectId) throw new Error('Project context is required.');
+  await assertProjectAdmin(projectId);
+  const forms = await listProjectForms(projectId);
+  return forms.map((form) => ({
+    id: clean(form?.id, 300),
+    name: clean(form?.name || 'Untitled form', 500),
+    portalRequestTypeIds: Array.isArray(form?.portalRequestTypeIds) ? form.portalRequestTypeIds : [],
+    updated: clean(form?.updated, 100),
+  })).filter((form) => form.id);
+});
+
+resolver.define('getProjectFormFields', async ({ payload }) => {
+  const projectId = clean(payload?.projectId, 100);
+  const formId = clean(payload?.formId, 300);
+  if (!projectId || !formId) return [];
+  await assertProjectAdmin(projectId);
+  const template = await getProjectForm(projectId, formId);
+  return projectFormFields(template);
 });
 
 resolver.define('getRuleFieldOptions', async ({ payload }) => {

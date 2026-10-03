@@ -1,62 +1,30 @@
 import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
-import { kvs, WhereConditions } from '@forge/kvs';
-import { enrichApproval, resolveDisplayName, stripStoredDisplayName } from './users.js';
+import { kvs } from '@forge/kvs';
+import { enrichApproval, resolveDisplayName } from './users.js';
 import { run as prepareRuleSuggestion } from './automation.js';
+import { getFormPreview, attachExternalFormToIssue, listIssueForms } from './forms.js';
+import {
+  addPublicComment, approvalKey, clean, configKey, json, nowIso, publishIssueSnapshot, queryPrefix, resolveGroup, saveApproval, transitionIssue,
+  uncoveredApprovers,
+} from './store.js';
 
 const resolver = new Resolver();
-const nowIso = () => new Date().toISOString();
 const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-const approvalKey = (id) => `approval#${id}`;
-const issueIndexKey = (issueKey, createdAt, id) => `issue#${issueKey}#${createdAt}#${id}`;
-const approverIndexKey = (accountId, createdAt, id) => `approver#${accountId}#${createdAt}#${id}`;
-const configKey = (projectId) => `config#${projectId}`;
 const suggestionKey = (issueKey) => `suggestion#${issueKey}`;
-const clean = (value, max = 1000) => String(value ?? '').trim().slice(0, max);
-
-async function json(response) {
-  const body = await response.text();
-  if (!response.ok) throw new Error(body || `Atlassian API error ${response.status}`);
-  return body ? JSON.parse(body) : null;
-}
-
-async function queryPrefix(prefix, max = 200) {
-  let cursor;
-  const out = [];
-  do {
-    let q = kvs.query().where('key', WhereConditions.beginsWith(prefix)).limit(20);
-    if (cursor) q = q.cursor(cursor);
-    const page = await q.getMany();
-    out.push(...(page?.results || []));
-    cursor = page?.nextCursor;
-  } while (cursor && out.length < max);
-  return out.slice(0, max);
-}
-
-async function saveApproval(record) {
-  const stored = stripStoredDisplayName(record);
-  await Promise.all([
-    kvs.set(approvalKey(stored.id), stored),
-    kvs.set(issueIndexKey(stored.issueKey, stored.createdAt, stored.id), stored),
-    kvs.set(approverIndexKey(stored.approver.accountId, stored.createdAt, stored.id), stored),
-  ]);
-}
+const formWatchKey = (issueKey) => `formwatch#${issueKey}`;
+const isDone = (issue) => issue?.fields?.status?.statusCategory?.key === 'done';
 
 async function getIssueAsUser(issueKey) {
   return json(await api.asUser().requestJira(route`/rest/api/3/issue/${issueKey}?fields=summary,project,status,reporter`));
 }
 
-async function getCanonicalUser(accountId) {
-  return json(await api.asApp().requestJira(route`/rest/api/3/user?accountId=${accountId}`));
+async function getIssueAsApp(issueKey) {
+  return json(await api.asApp().requestJira(route`/rest/api/3/issue/${issueKey}?fields=summary,project,status,reporter`));
 }
 
-async function addPublicComment(issueKey, text) {
-  try {
-    await json(await api.asApp().requestJira(route`/rest/servicedeskapi/request/${issueKey}/comment`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ body: text, public: true }),
-    }));
-  } catch (error) { console.warn('Unable to add JSM public comment', error?.message || error); }
+async function getCanonicalUser(accountId) {
+  return json(await api.asApp().requestJira(route`/rest/api/3/user?accountId=${accountId}`));
 }
 
 async function addParticipant(issueKey, accountId) {
@@ -67,23 +35,6 @@ async function addParticipant(issueKey, accountId) {
     }));
     return true;
   } catch (error) { console.warn('Unable to add approver as request participant', error?.message || error); return false; }
-}
-
-async function transitionIssue(issueKey, targetStatus, legacyTransitionId) {
-  let transitionId = clean(legacyTransitionId, 100);
-  const target = clean(targetStatus, 200);
-  if (target) {
-    const available = await json(await api.asApp().requestJira(route`/rest/api/3/issue/${issueKey}/transitions?expand=transitions.fields`));
-    const match = (available?.transitions || []).find((t) => clean(t?.to?.name, 200).toLowerCase() === target.toLowerCase());
-    if (!match?.id) throw new Error(`No available Jira transition leads to status “${target}” from the ticket's current status.`);
-    transitionId = String(match.id);
-  }
-  if (!transitionId) return false;
-  await json(await api.asApp().requestJira(route`/rest/api/3/issue/${issueKey}/transitions`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ transition: { id: transitionId } }),
-  }));
-  return true;
 }
 
 resolver.define('searchApprovers', async ({ payload }) => {
@@ -97,7 +48,7 @@ resolver.define('getIssueApprovals', async ({ payload }) => {
   const issueKey = clean(payload?.issueKey, 100);
   if (!issueKey) return [];
   await getIssueAsUser(issueKey);
-  const rows = await queryPrefix(`issue#${issueKey}#`, 200);
+  const rows = await queryPrefix(`issue#${issueKey}#`);
   const records = rows.map((r) => r.value).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   return Promise.all(records.map(enrichApproval));
 });
@@ -123,11 +74,14 @@ resolver.define('getApprovalDefaults', async ({ payload }) => {
     }
   }
 
+  // A stored suggestion can predate a request sent without it (e.g. the agent
+  // picked the same people manually), so re-check who is still to be asked.
+  const outstanding = suggestion ? await uncoveredApprovers(issueKey, suggestion.approvers || []) : [];
   let enrichedSuggestion = null;
-  if (suggestion) {
+  if (outstanding.length) {
     enrichedSuggestion = {
       ...suggestion,
-      approvers: await Promise.all((suggestion.approvers || []).map(async (a) => ({
+      approvers: await Promise.all(outstanding.map(async (a) => ({
         accountId: a.accountId,
         displayName: await resolveDisplayName(a.accountId),
       }))),
@@ -140,16 +94,63 @@ resolver.define('getApprovalDefaults', async ({ payload }) => {
   };
 });
 
-resolver.define('createApproval', async ({ payload, context }) => {
+
+resolver.define('getApprovalFormStatus', async ({ payload }) => {
+  const issueKey = clean(payload?.issueKey, 100);
+  if (!issueKey) return { configured: false };
+  await getIssueAsUser(issueKey);
+  const suggestion = await kvs.get(suggestionKey(issueKey));
+  if (!suggestion?.formEnabled || !suggestion?.formId) return { configured: false };
+  const forms = await listIssueForms(issueKey);
+  const existing = forms.find((form) => clean(form?.formTemplate?.id || form?.id, 300) === clean(suggestion.formId, 300));
+  return {
+    configured: true,
+    ruleName: clean(suggestion.ruleName, 200),
+    formId: clean(suggestion.formId, 300),
+    attached: Boolean(existing),
+    instanceId: clean(existing?.id, 300),
+    name: clean(existing?.name || 'Configured JSM Form', 500),
+    submitted: existing?.submitted === true || existing?.state?.status === 's',
+  };
+});
+
+resolver.define('sendApprovalFormToCustomer', async ({ payload }) => {
+  const issueKey = clean(payload?.issueKey, 100);
+  if (!issueKey) throw new Error('Issue is required.');
+  const issue = await getIssueAsUser(issueKey);
+  // Re-evaluate the complete rule immediately before attaching the form. This is
+  // the server-side client/condition safety check: a stale UI suggestion cannot
+  // expose a client-specific form after SD Client or another condition changes.
+  await prepareRuleSuggestion({ issue: { key: issueKey, fields: { project: { id: String(issue.fields.project.id) } } } });
+  const suggestion = await kvs.get(suggestionKey(issueKey));
+  if (!suggestion?.formEnabled || !suggestion?.formId) throw new Error('This request no longer matches a rule that allows this JSM Form.');
+  const forms = await listIssueForms(issueKey);
+  const existing = forms.find((form) => clean(form?.formTemplate?.id || form?.id, 300) === clean(suggestion.formId, 300));
+  if (existing) {
+    if (suggestion.autoSendOnFormSubmit === true && !(existing?.submitted === true || existing?.state?.status === 's')) {
+      await kvs.set(formWatchKey(issueKey), { issueKey, projectId: String(issue.fields.project.id), formId: clean(suggestion.formId, 300), instanceId: clean(existing.id, 300), ruleId: clean(suggestion.ruleId, 200), createdAt: nowIso() });
+    }
+    return { attached: true, alreadyAttached: true, instanceId: clean(existing.id, 300), name: clean(existing.name || 'JSM Form', 500), submitted: existing?.submitted === true || existing?.state?.status === 's' };
+  }
+  const attached = await attachExternalFormToIssue(issueKey, suggestion.formId);
+  if (suggestion.autoSendOnFormSubmit === true) {
+    await kvs.set(formWatchKey(issueKey), { issueKey, projectId: String(issue.fields.project.id), formId: clean(suggestion.formId, 300), instanceId: clean(attached?.instanceId || attached?.id, 300), ruleId: clean(suggestion.ruleId, 200), createdAt: nowIso() });
+  }
+  await addPublicComment(issueKey, 'A form is required for this request. Please open this request in the customer portal, complete the attached form and submit it.');
+  return { attached: true, alreadyAttached: false, ...attached };
+});
+
+export async function createApprovalHandler({ payload, context = {} }) {
   const issueKey = clean(payload?.issueKey, 100);
   const requestedApprovers = Array.isArray(payload?.approvers) ? payload.approvers : payload?.approver ? [payload.approver] : [];
   if (!issueKey || requestedApprovers.length === 0) throw new Error('Issue and at least one approver are required.');
 
-  const issue = await getIssueAsUser(issueKey);
+  const issue = payload?.system === true ? await getIssueAsApp(issueKey) : await getIssueAsUser(issueKey);
+  if (isDone(issue)) throw new Error('This request is already closed, so approval can no longer be requested.');
   const settings = (await kvs.get(configKey(String(issue.fields.project.id)))) || {};
   const suggestion = await kvs.get(suggestionKey(issueKey));
   const prepared = suggestion && clean(payload?.preparedRuleId, 200) && clean(payload.preparedRuleId, 200) === clean(suggestion.ruleId, 200) ? suggestion : null;
-  const existing = await queryPrefix(`issue#${issueKey}#`, 200);
+  const existing = await queryPrefix(`issue#${issueKey}#`);
   const pendingAccountIds = new Set(existing.map((r) => r.value).filter((r) => r?.status === 'pending').map((r) => r.approver?.accountId));
 
   const canonicalApprovers = [];
@@ -169,6 +170,30 @@ resolver.define('createApproval', async ({ payload, context }) => {
   const reminderHours = Math.min(720, Math.max(1, Number(payload?.reminderHours || prepared?.reminderHours || settings.reminderHours || 24)));
   const records = [];
 
+  // Capture a small approval-time snapshot of the submitted JSM Form. This
+  // ensures the portal approver reviews the same answers the agent sent.
+  // Forms remain optional and a Forms API failure must never block legacy approvals.
+  let formSnapshot = null;
+  try {
+    if (prepared?.formEnabled === true) {
+      const preview = await getFormPreview(issueKey, prepared?.formId || '');
+      if (preview?.submitted && Array.isArray(preview.answers)) {
+        const allowedKeys = Array.isArray(prepared?.formFieldKeys) ? new Set(prepared.formFieldKeys.map((x) => clean(x, 300))) : null;
+        // Prefer the administrator's explicit field selection. For a form-enabled
+        // rule with no selected fields (including rules created before field
+        // selection existed), show the submitted answers rather than presenting
+        // an approver with an empty decision screen.
+        const answers = preview.answers
+          .filter((row) => !allowedKeys || allowedKeys.size === 0 || allowedKeys.has(clean(row.fieldKey, 300)))
+          .slice(0, 50)
+          .map((row) => ({ fieldKey: clean(row.fieldKey, 300), label: clean(row.label, 500), answer: clean(row.answer, 4000) }));
+        formSnapshot = { formId: clean(preview.formId, 300), instanceId: clean(preview.instanceId, 300), name: clean(preview.name, 500), capturedAt: nowIso(), answers, auditFieldMap: { approvedByFieldKey: clean(prepared.approvedByFieldKey, 300), approvedAtFieldKey: clean(prepared.approvedAtFieldKey, 300), decisionFieldKey: clean(prepared.decisionFieldKey, 300), decisionCommentFieldKey: clean(prepared.decisionCommentFieldKey, 300) } };
+      }
+    }
+  } catch (error) {
+    console.warn('Smart Approval: unable to capture optional JSM Form snapshot', error?.message || error);
+  }
+
   const approvedTarget = clean(prepared?.approveTargetStatus || settings.approveTargetStatus, 200);
   const declinedTarget = clean(prepared?.declineTargetStatus || settings.declineTargetStatus, 200);
   const approvedTransition = clean(prepared?.approveTransitionId || settings.approveTransitionId, 100);
@@ -185,7 +210,7 @@ resolver.define('createApproval', async ({ payload, context }) => {
       source: prepared ? 'rule-assisted' : 'manual',
       ruleId: prepared ? clean(prepared.ruleId, 200) : '',
       ruleName: prepared ? clean(prepared.ruleName, 200) : '',
-      message: clean(payload?.message, 2000), status: 'pending', createdAt, updatedAt: createdAt,
+      message: clean(payload?.message, 2000), formSnapshot, status: 'pending', createdAt, updatedAt: createdAt,
       reminderHours, reminderCount: 0, nextReminderAt: new Date(Date.now() + reminderHours * 3600000).toISOString(),
       ruleTargetStatuses: { approved: approvedTarget, declined: declinedTarget },
       ruleTransitionIds: { approved: approvedTransition, declined: declinedTransition },
@@ -206,8 +231,11 @@ resolver.define('createApproval', async ({ payload, context }) => {
     catch (error) { console.warn('Approval pending transition failed', error?.message || error); }
   }
   if (prepared) await kvs.delete(suggestionKey(issueKey));
+  await publishIssueSnapshot(issueKey);
   return Promise.all(records.map(enrichApproval));
-});
+}
+
+resolver.define('createApproval', createApprovalHandler);
 
 resolver.define('sendReminder', async ({ payload, context }) => {
   const record = await kvs.get(approvalKey(clean(payload?.approvalId, 200)));
@@ -226,12 +254,18 @@ resolver.define('sendReminder', async ({ payload, context }) => {
 resolver.define('cancelApproval', async ({ payload, context }) => {
   const record = await kvs.get(approvalKey(clean(payload?.approvalId, 200)));
   if (!record || record.status !== 'pending') throw new Error('Pending approval not found.');
-  await getIssueAsUser(record.issueKey);
-  const at = nowIso(); record.status = 'cancelled'; record.updatedAt = at; record.cancelledAt = at;
+  const issue = await getIssueAsUser(record.issueKey);
+  const at = nowIso(); record.status = 'cancelled'; record.updatedAt = at; record.cancelledAt = at; record.nextReminderAt = null;
   record.events = [...(record.events || []), { type: 'cancelled', at, by: context.accountId || 'agent' }];
   await saveApproval(record);
   const name = await resolveDisplayName(record.approver.accountId);
   await addPublicComment(record.issueKey, `Approval request for ${name} was cancelled.`);
+  // Cancelling the last outstanding approver can complete the group (e.g. everyone
+  // else already approved), so the group outcome must be re-evaluated here too.
+  // Never on a closed ticket: the outcome's workflow transition could reopen it.
+  if (!isDone(issue)) await resolveGroup(record, (await kvs.get(configKey(record.projectId))) || {});
+  // Published after the group is resolved so the snapshot includes any siblings it closed.
+  await publishIssueSnapshot(record.issueKey);
   return enrichApproval(record);
 });
 

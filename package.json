@@ -7,7 +7,7 @@
   "scripts": {
     "lint": "forge lint",
     "deploy": "forge deploy",
-    "test": "node --check src/backend/index.js && node --check src/backend/portal.js && node --check src/backend/config.js && node --check src/backend/automation.js && node --check src/backend/reminders.js && node --check src/backend/users.js && node --test test/*.test.mjs"
+    "test": "node --check src/backend/index.js && node --check src/backend/portal.js && node --check src/backend/config.js && node --check src/backend/automation.js && node --check src/backend/reminders.js && node --check src/backend/users.js && node --check src/backend/store.js && node --check src/backend/forms.js && node --check src/backend/form-submission-worker.js && node --check src/backend/portal-plus-provider.js && node --check src/backend/portal-plus-publisher.js && node --experimental-test-module-mocks --no-warnings --test test/*.test.mjs"
   },
   "dependencies": {
     "@forge/api": "latest",

@@ -1,9 +1,16 @@
 import api, { route } from '@forge/api';
 import { kvs } from '@forge/kvs';
+import { expirePendingForIssue, uncoveredApprovers } from './store.js';
 
 const configKey = (projectId) => `config#${projectId}`;
 const suggestionKey = (issueKey) => `suggestion#${issueKey}`;
 const clean = (value, max = 1000) => String(value ?? '').trim().slice(0, max);
+const isDone = (issue) => issue?.fields?.status?.statusCategory?.key === 'done';
+
+async function closeOut(issueKey) {
+  await expirePendingForIssue(issueKey, 'ticket-resolved');
+  await Promise.all([kvs.delete(suggestionKey(issueKey)), kvs.delete(`formwatch#${issueKey}`)]);
+}
 
 async function json(response) {
   const body = await response.text();
@@ -36,10 +43,12 @@ function conditionMatches(issue, condition) {
   const actual = values(issue.fields?.[fieldId]).map((v) => clean(v, 1000).toLowerCase());
   const expected = clean(condition?.value, 1000).toLowerCase();
   const operator = condition?.operator || 'equals';
+  const expectedMany = (Array.isArray(condition?.values) ? condition.values : []).map((v) => clean(v, 1000).toLowerCase()).filter(Boolean);
   if (operator === 'isEmpty') return actual.length === 0 || actual.every((v) => !v);
   if (operator === 'notEmpty') return actual.some(Boolean);
   if (operator === 'notEquals') return !actual.includes(expected);
   if (operator === 'contains') return actual.some((v) => v.includes(expected));
+  if (operator === 'isAnyOf') return expectedMany.length > 0 && expectedMany.some((v) => actual.includes(v));
   return actual.includes(expected);
 }
 
@@ -57,6 +66,10 @@ export async function run(event) {
   const projectId = String(event?.issue?.fields?.project?.id || '');
   if (!issueKey || !projectId) return;
 
+  // A finished ticket needs no approval: withdraw anything still outstanding so
+  // reminders stop and a late decision cannot transition the closed ticket.
+  if (isDone(event.issue)) return closeOut(issueKey);
+
   const settings = (await kvs.get(configKey(projectId))) || {};
   const rules = Array.isArray(settings.autoRules) ? settings.autoRules : [];
   if (!rules.length) {
@@ -65,6 +78,7 @@ export async function run(event) {
   }
 
   const issue = await json(await api.asApp().requestJira(route`/rest/api/3/issue/${issueKey}?fields=*all`));
+  if (isDone(issue)) return closeOut(issueKey);
   const rule = rules.find((candidate) => ruleMatches(issue, candidate));
   if (!rule) {
     await kvs.delete(suggestionKey(issueKey));
@@ -74,14 +88,17 @@ export async function run(event) {
   // Rule configuration already stores stable Atlassian account IDs. Do not require an
   // additional Jira user lookup just to prepare the agent form: portal-only JSM customers
   // can be valid approvers even when the Jira user endpoint cannot resolve them here.
-  const approvers = [];
+  const configuredApprovers = [];
   const seen = new Set();
   for (const configured of (Array.isArray(rule.approvers) ? rule.approvers : []).slice(0, 20)) {
     const accountId = clean(configured?.accountId, 200);
     if (!accountId || accountId === 'unknown' || seen.has(accountId)) continue;
     seen.add(accountId);
-    approvers.push({ accountId });
+    configuredApprovers.push({ accountId });
   }
+  // Once the rule's approvers have been asked, there is nothing left to prepare;
+  // without this the panel re-fills with them straight after sending.
+  const approvers = await uncoveredApprovers(issueKey, configuredApprovers);
 
   if (!approvers.length) {
     await kvs.delete(suggestionKey(issueKey));
@@ -99,6 +116,14 @@ export async function run(event) {
     approvers,
     approvalMode: rule.approvalMode === 'any' ? 'any' : 'all',
     message: clean(rule.message || '', 2000),
+    formEnabled: rule.formEnabled === true,
+    autoSendOnFormSubmit: rule.autoSendOnFormSubmit === true,
+    formId: clean(rule.formId, 300),
+    formFieldKeys: (Array.isArray(rule.formFieldKeys) ? rule.formFieldKeys : []).slice(0, 50).map((x) => clean(x, 300)).filter(Boolean),
+    approvedByFieldKey: clean(rule.approvedByFieldKey, 300),
+    approvedAtFieldKey: clean(rule.approvedAtFieldKey, 300),
+    decisionFieldKey: clean(rule.decisionFieldKey, 300),
+    decisionCommentFieldKey: clean(rule.decisionCommentFieldKey, 300),
     reminderHours: Math.min(720, Math.max(1, Number(rule.reminderHours || settings.reminderHours || 24))),
     pendingTargetStatus: clean(rule.pendingTargetStatus || settings.pendingTargetStatus, 200),
     approveTargetStatus: clean(rule.approveTargetStatus || settings.approveTargetStatus, 200),

@@ -1,0 +1,1 @@
+Smart Approval Manager production candidate based on the tested current main branch, including the latest portal and agent UI improvements. Production deployment workflow is preserved on this candidate branch.
