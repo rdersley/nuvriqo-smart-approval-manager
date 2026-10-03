@@ -2,6 +2,11 @@ import React, { useEffect, useState } from 'react';
 import ForgeReconciler, { Button, Checkbox, Heading, Inline, Label, Lozenge, Select, Spinner, Stack, Text, TextArea, Textfield, useProductContext } from '@forge/react';
 import { invoke } from '@forge/bridge';
 
+const portalCardOptions = [
+  { label: 'Always show it', value: 'always' },
+  { label: 'Only when approvals are waiting', value: 'pending' },
+  { label: 'Never show it', value: 'never' },
+];
 const modeOptions = [
   { label: 'All approvers must approve', value: 'all' },
   { label: 'Any one approver can approve', value: 'any' },
@@ -436,6 +441,9 @@ const Settings = () => {
       <Label labelFor="reminder-hours">Automatic reminder interval (hours)</Label>
       <Textfield id="reminder-hours" type="number" value={String(settings.reminderHours)} onChange={(e) => update('reminderHours', e.target.value)} />
       <Checkbox isChecked={settings.autoAddParticipant} onChange={(e) => update('autoAddParticipant', e.target.checked)} label="Add approvers as request participants when the agent sends the approval" />
+      <Label labelFor="portal-card">Approvals card on this project's customer portal</Label>
+      <Select inputId="portal-card" options={portalCardOptions} value={portalCardOptions.find((x) => x.value === settings.portalCard) || portalCardOptions[0]} onChange={(v) => update('portalCard', v?.value || 'always')} />
+      <Text>Approvers can always open My Approvals from their profile menu.</Text>
       <Checkbox isChecked={settings.requireDeclineReason} onChange={(e) => update('requireDeclineReason', e.target.checked)} label="Require a reason when declining" />
 
       <Stack space="space.100">

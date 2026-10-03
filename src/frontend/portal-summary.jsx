@@ -8,6 +8,7 @@ const PortalSummary = () => {
   const [expanded, setExpanded] = useState({});
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
+  const [mode, setMode] = useState('always');
 
   const refresh = async () => {
     try {
@@ -18,7 +19,10 @@ const PortalSummary = () => {
     }
   };
 
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => {
+    invoke('getPortalCardMode').then((r) => setMode(r?.mode || 'always')).catch(() => setMode('always'));
+    refresh();
+  }, []);
 
   const decide = async (approvalId, decision) => {
     setBusy(approvalId);
@@ -39,7 +43,9 @@ const PortalSummary = () => {
     }
   };
 
-  if (items === null) return <Spinner />;
+  if (mode === 'never') return null;
+  if (items === null) return mode === 'pending' ? null : <Spinner />;
+  if (items.length === 0 && mode === 'pending') return null;
 
   if (items.length === 0) return <Stack space="space.100">
     <Inline space="space.100" alignBlock="center">
