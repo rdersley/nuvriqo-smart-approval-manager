@@ -2,6 +2,7 @@ import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 import { kvs } from '@forge/kvs';
 import { resolveDisplayName } from './users.js';
+import { announceToPortalPlus } from './portal-plus-menu.js';
 
 const resolver = new Resolver();
 const configKey = (projectId) => `config#${projectId}`;
@@ -182,6 +183,7 @@ resolver.define('saveSettings', async ({ payload }) => {
     autoRules: cleanRules(incoming.autoRules),
   };
   await kvs.set(configKey(projectId), settings);
+  await announceToPortalPlus(projectId);
   return enrichSettings(settings);
 });
 
