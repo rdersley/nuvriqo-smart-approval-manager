@@ -47,6 +47,17 @@ modules:
         - customer
         - unlicensed
 
+  jiraServiceManagement:portalRequestDetail:
+    - key: smart-approval-account-forms
+      resource: portal-account-forms
+      resolver:
+        function: portal-resolver
+      render: native
+      title: Account forms
+      unlicensedAccess:
+        - customer
+        - unlicensed
+
   trigger:
     - key: smart-approval-auto-rules
       function: auto-rule-worker
@@ -87,6 +98,8 @@ resources:
     path: src/frontend/portal-summary.jsx
   - key: portal-approvals
     path: src/frontend/portal-approvals.jsx
+  - key: portal-account-forms
+    path: src/frontend/portal-account-forms.jsx
   - key: settings-page
     path: src/frontend/settings.jsx
 

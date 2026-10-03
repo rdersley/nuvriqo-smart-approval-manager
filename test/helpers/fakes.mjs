@@ -47,8 +47,9 @@ export function createFakeJira({ issues = {}, users = {}, transitions = {}, form
   const applied = [];
   const calls = [];
   const properties = {};
+  let formSeq = 0;
 
-  async function requestJira(path, options = {}) {
+  async function requestJira(path, options = {}, caller = '') {
     const method = (options.method || 'GET').toUpperCase();
     const url = new URL(String(path), 'https://jira.test');
     const body = options.body ? JSON.parse(options.body) : undefined;
@@ -91,11 +92,42 @@ export function createFakeJira({ issues = {}, users = {}, transitions = {}, form
       properties[`${decodeURIComponent(m[1])}/${decodeURIComponent(m[2])}`] = body;
       return response(200, {});
     }
-    if ((m = /^\/forms\/issue\/([^/]+)\/form$/.exec(url.pathname)) && method === 'GET') {
-      return response(200, forms[decodeURIComponent(m[1])] || []);
+    // Portal visibility check, made as the signed-in customer (`caller`).
+    if ((m = /^\/rest\/servicedeskapi\/request\/([^/]+)$/.exec(url.pathname)) && method === 'GET') {
+      const issue = issues[decodeURIComponent(m[1])];
+      const visible = issue && (!caller || (issue.customers || []).includes(caller));
+      return visible ? response(200, { issueKey: decodeURIComponent(m[1]) }) : response(404, { errorMessage: 'Not found' });
+    }
+
+    // JSM Forms. forms[issueKey] is a list of form copies:
+    // { id, formTemplate: { id }, name, submitted, external, answers: { questionKey: value } }
+    if ((m = /^\/forms\/issue\/([^/]+)\/form$/.exec(url.pathname))) {
+      const key = decodeURIComponent(m[1]);
+      forms[key] = forms[key] || [];
+      if (method === 'GET') return response(200, forms[key].map(({ answers, ...form }) => form));
+      formSeq += 1;
+      const copy = { id: `copy-${formSeq}`, formTemplate: { id: body.formTemplate.id }, name: `Form ${body.formTemplate.id}`, submitted: false, external: false, answers: {} };
+      forms[key].push(copy);
+      return response(200, { id: copy.id, formTemplate: copy.formTemplate, name: copy.name });
+    }
+    if ((m = /^\/forms\/issue\/([^/]+)\/form\/([^/]+)(\/.*)?$/.exec(url.pathname))) {
+      const copy = (forms[decodeURIComponent(m[1])] || []).find((f) => f.id === decodeURIComponent(m[2]));
+      if (!copy) return response(404, {});
+      if (m[3] === '/action/external' && method === 'PUT') { copy.external = true; return response(200, {}); }
+      if (m[3] === '/format/answers' && method === 'GET') {
+        return response(200, Object.entries(copy.answers).map(([fieldKey, answer]) => ({ fieldKey, label: fieldKey, answer })));
+      }
+      if (!m[3] && method === 'GET') return response(200, { id: copy.id, state: { answers: { ...copy.writtenBack } } });
+      if (!m[3] && method === 'PUT') { copy.writtenBack = body.answers; return response(200, {}); }
     }
     throw new Error(`Unexpected Jira call: ${method} ${url.pathname}`);
   }
 
-  return { issues, comments, applied, calls, properties, requestJira };
+  // The customer fills in and submits one copy of a form in the portal.
+  const submitForm = (issueKey, copyId, answers) => {
+    const copy = (forms[issueKey] || []).find((f) => f.id === copyId);
+    Object.assign(copy, { submitted: true, answers });
+  };
+
+  return { issues, comments, applied, calls, properties, forms, submitForm, requestJira };
 }

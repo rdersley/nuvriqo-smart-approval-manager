@@ -25,6 +25,8 @@ const newRule = (number) => ({
   message: 'Please review and approve this request.',
   formEnabled: false,
   autoSendOnFormSubmit: false,
+  formPerAccount: false,
+  formAccountFieldKey: '',
   formId: '',
   formFieldKeys: [],
   reminderHours: 24,
@@ -347,6 +349,25 @@ const Settings = () => {
                 )}
               </Stack> : null}
               <Text>Only explicitly selected submitted answers are copied into the approval snapshot. If no fields are selected, no form answers are exposed to approvers.</Text>
+              <Checkbox
+                isChecked={rule.formPerAccount === true}
+                onChange={(e) => updateRule(ruleIndex, { formPerAccount: e.target.checked })}
+                label="One form per account: a separate form and approval for each user account"
+              />
+              {rule.formPerAccount ? <Stack space="space.075">
+                <Text>For audit requirements where every user needs their own approved form. The agent sends one form per account, and the customer can add more from the portal. Each submitted form gets its own approval, and the ticket moves on once every account form has been decided.</Text>
+                {rule.formId && (formFields[rule.formId] || []).length > 0 ? <>
+                  <Label labelFor={`account-field-${ruleIndex}`}>Question that identifies the account</Label>
+                  <Select
+                    inputId={`account-field-${ruleIndex}`}
+                    options={(formFields[rule.formId] || []).map((field) => ({ label: field.label, value: field.key }))}
+                    value={rule.formAccountFieldKey ? { label: (formFields[rule.formId] || []).find((field) => field.key === rule.formAccountFieldKey)?.label || rule.formAccountFieldKey, value: rule.formAccountFieldKey } : null}
+                    placeholder="e.g. Vector / vPack username"
+                    onChange={(v) => updateRule(ruleIndex, { formAccountFieldKey: v?.value || '' })}
+                  />
+                  <Text>Its answer labels each form and approval, e.g. "Approval for FCOpacker3@ryr.com".</Text>
+                </> : null}
+              </Stack> : null}
               {rule.formId && (formFields[rule.formId] || []).length > 0 ? <Stack space="space.075">
                 <Heading size="xsmall">Write approval result onto the form</Heading>
                 <Text>Optionally map dedicated form questions for the electronic approval record.</Text>

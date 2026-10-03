@@ -84,7 +84,8 @@ const AgentPanel = () => {
     finally { setBusy(false); }
   };
 
-  const requestApproval = async () => {
+  // formInstanceId: with one form per account, the approval is for that copy only.
+  const requestApproval = async (formInstanceId = '') => {
     const approvers = (selected || []).map((s) => ({ accountId: s.value, displayName: s.label }));
     if (!approvers.length) return setError('Select at least one approver first.');
     setBusy(true); setError('');
@@ -95,9 +96,13 @@ const AgentPanel = () => {
         approvalMode: approvalMode?.value,
         message,
         preparedRuleId: preparedRule?.ruleId || '',
+        formInstanceId,
       });
-      setQuery(''); setUsers([]); setSelected([]); setMessage(''); setPreparedRule(null);
-      agentEdited.current = false;
+      // Keep the approvers for the remaining account forms.
+      if (!formInstanceId) {
+        setQuery(''); setUsers([]); setSelected([]); setMessage(''); setPreparedRule(null);
+        agentEdited.current = false;
+      }
       await refresh();
     } catch (e) { setError(e.message || String(e)); }
     finally { setBusy(false); }
@@ -123,6 +128,16 @@ const AgentPanel = () => {
   };
 
   const pendingCount = approvals.filter((a) => a.status === 'pending').length;
+  const perAccount = Boolean(preparedRule?.formEnabled && formStatus?.perAccount);
+  const accountForms = formStatus?.forms || [];
+  const accountStates = {
+    'waiting-for-customer': ['Waiting for customer', 'inprogress'],
+    submitted: ['Submitted, approval not sent', 'new'],
+    pending: ['Approval waiting', 'inprogress'],
+    approved: ['Approved', 'success'],
+    declined: ['Declined', 'removed'],
+    withdrawn: ['Approval cancelled', 'default'],
+  };
   const sameIds = (a, b) => a.length === b.length && a.every((x) => b.some((y) => y.value === x.value));
   const suggestionOverridden = Boolean(preparedRule) && !sameIds(selected || [], toOptions(preparedRule?.approvers));
 
@@ -172,7 +187,23 @@ const AgentPanel = () => {
     </Stack>
 
 
-      {preparedRule?.formEnabled ? <Stack space="space.100">
+      {perAccount ? <Stack space="space.100">
+        <Heading size="small">Account forms (one per user)</Heading>
+        <Text>This rule needs a separate form and a separate approval for each user account. Send one form per account; the customer can also add forms from the portal. The ticket moves on once every account form has been decided.</Text>
+        {accountForms.length === 0 ? <Text>No account forms have been sent yet.</Text> : accountForms.map((form) => {
+          const [label, appearance] = accountStates[form.state] || [form.state, 'default'];
+          return <Inline key={form.instanceId} space="space.100" alignBlock="center">
+            <Text><Text weight="bold">Form {form.number}</Text>{form.label ? ` · ${form.label}` : ''}</Text>
+            <Lozenge appearance={appearance}>{label}</Lozenge>
+            {form.state === 'submitted' || (form.state === 'withdrawn' && form.submitted) ? <Button
+              onClick={() => requestApproval(form.instanceId)}
+              isDisabled={!defaultsLoaded || busy || (selected || []).length === 0}
+            >Send approval</Button> : null}
+          </Inline>;
+        })}
+        {formStatus?.autoSend ? <Text>Approvals are sent automatically to the selected approvers when each form is submitted.</Text> : null}
+        <Button onClick={sendForm} isDisabled={busy || accountForms.length >= (formStatus?.max || 25)}>{accountForms.length ? 'Send another account form' : 'Send first form to customer'}</Button>
+      </Stack> : preparedRule?.formEnabled ? <Stack space="space.100">
         <Heading size="small">Required customer form</Heading>
         {!formStatus?.attached ? <>
           <Text>This approval rule requires a JSM Form. Attach it to this request only and make it available to this customer in the portal.</Text>
@@ -194,8 +225,10 @@ const AgentPanel = () => {
 
     <Stack space="space.100">
       <Heading size="small">3. Send for approval</Heading>
-      <Text>The customer will only be notified after you send the request.</Text>
-      <Button appearance="primary" onClick={requestApproval} isDisabled={!defaultsLoaded || (selected || []).length === 0 || busy || (preparedRule?.formEnabled && !formStatus?.submitted)}>Send approval request</Button>
+      {perAccount ? <Text>Approvals are sent per account form, using the approvers and message above.</Text> : <>
+        <Text>The customer will only be notified after you send the request.</Text>
+        <Button appearance="primary" onClick={() => requestApproval()} isDisabled={!defaultsLoaded || (selected || []).length === 0 || busy || (preparedRule?.formEnabled && !formStatus?.submitted)}>Send approval request</Button>
+      </>}
     </Stack>
 
     <Stack space="space.150">
@@ -209,6 +242,7 @@ const AgentPanel = () => {
             <Text><Text weight="bold">{a.approver.displayName}</Text></Text>
             <Lozenge appearance={a.status === 'approved' ? 'success' : a.status === 'declined' ? 'removed' : a.status === 'pending' ? 'inprogress' : 'default'}>{a.status === 'approved' ? 'Approved' : a.status === 'declined' ? 'Declined' : a.status === 'pending' ? 'Waiting' : a.cancelReason ? 'Withdrawn: ticket closed' : a.status}</Lozenge>
           </Inline>
+          {a.formAccountLabel ? <Text><Text weight="bold">Account form:</Text> {a.formAccountLabel}</Text> : null}
           <Text>Requested {new Date(a.createdAt).toLocaleString()} · Reminders sent: {a.reminderCount || 0}</Text>
           {groupProgress(a) ? <Text>{groupProgress(a)}</Text> : null}
           {a.source === 'rule-assisted' && a.ruleName ? <Text>Prepared by rule: {a.ruleName} · sent by agent</Text> : a.source === 'manual' ? <Text>Selected manually by the agent</Text> : null}

@@ -1,10 +1,13 @@
 import Resolver from '@forge/resolver';
+import api, { route } from '@forge/api';
 import { kvs } from '@forge/kvs';
 import { enrichApproval, resolveDisplayName } from './users.js';
 import { writeApprovalAuditToForm } from './forms.js';
+import { run as prepareRuleSuggestion } from './automation.js';
+import { MAX_ACCOUNT_FORMS, attachAccountForm, isSubmitted, listAccountForms } from './account-forms.js';
 import {
   addPublicComment, approvalKey, clean, configKey, ensurePendingIndex, expireApproval,
-  issueState, loadPending, nowIso, publishIssueSnapshot, queryPrefix, resolveGroup, saveApproval,
+  issueState, json, loadPending, nowIso, publishIssueSnapshot, queryPrefix, resolveGroup, saveApproval,
 } from './store.js';
 
 const resolver = new Resolver();
@@ -60,7 +63,8 @@ resolver.define('decideApproval', async ({ payload, context }) => {
   record.events = [...(record.events || []), { type: decision, at, by: context.accountId, reason }];
   await saveApproval(record);
   const approverName = await resolveDisplayName(record.approver.accountId);
-  await addPublicComment(record.issueKey, `${approverName} ${decision === 'approved' ? 'approved' : 'declined'} this request${reason ? `: ${reason}` : '.'}`);
+  const what = record.formAccountLabel ? `the form for ${record.formAccountLabel}` : 'this request';
+  await addPublicComment(record.issueKey, `${approverName} ${decision === 'approved' ? 'approved' : 'declined'} ${what}${reason ? `: ${reason}` : '.'}`);
 
   // Where the rule maps dedicated audit questions, write the decision back onto
   // the same JSM Form instance. This is best-effort: the approval decision remains
@@ -86,6 +90,46 @@ resolver.define('decideApproval', async ({ payload, context }) => {
   await resolveGroup(record, settings);
   await publishIssueSnapshot(record.issueKey);
   return enrichApproval(record);
+});
+
+// --- One form per account: customer side ---------------------------------
+// Customers cannot add forms to a request in JSM themselves, so the request
+// page offers "Add a form for another account". Only for someone who can see
+// the request (checked as that customer), only while an account-form rule
+// still matches, only after an agent sent the first form, and up to a cap.
+async function accountFormContext(issueKey, accountId) {
+  if (!accountId) throw new Error('You must be signed in.');
+  const key = clean(issueKey, 100);
+  const visible = await api.asUser().requestJira(route`/rest/servicedeskapi/request/${key}`, { headers: { Accept: 'application/json' } });
+  if (!visible.ok) throw new Error('Request not found.');
+  // This panel loads on every portal request page, so stop cheaply on closed
+  // tickets and on projects with no account-form rule.
+  const issue = await json(await api.asApp().requestJira(route`/rest/api/3/issue/${key}?fields=project,status`));
+  if (issue?.fields?.status?.statusCategory?.key === 'done') return { key, enabled: false };
+  const projectId = String(issue?.fields?.project?.id || '');
+  const rules = (await kvs.get(configKey(projectId)))?.autoRules || [];
+  if (!rules.some((rule) => rule?.formEnabled === true && rule?.formPerAccount === true)) return { key, enabled: false };
+  await prepareRuleSuggestion({ issue: { key, fields: { project: { id: projectId } } } });
+  const suggestion = await kvs.get(`suggestion#${key}`);
+  if (!suggestion?.formEnabled || !suggestion?.formPerAccount || !suggestion?.formId) return { key, enabled: false };
+  return { key, enabled: true, projectId, suggestion, forms: await listAccountForms(key, suggestion.formId) };
+}
+
+resolver.define('getAccountForms', async ({ payload, context }) => {
+  const ctx = await accountFormContext(payload?.issueKey, context.accountId);
+  if (!ctx.enabled || !ctx.forms.length) return { enabled: false };
+  return {
+    enabled: true, max: MAX_ACCOUNT_FORMS, count: ctx.forms.length,
+    submitted: ctx.forms.filter(isSubmitted).length, canAdd: ctx.forms.length < MAX_ACCOUNT_FORMS,
+  };
+});
+
+resolver.define('addAccountForm', async ({ payload, context }) => {
+  const ctx = await accountFormContext(payload?.issueKey, context.accountId);
+  if (!ctx.enabled) throw new Error('This request does not use one form per account.');
+  if (!ctx.forms.length) throw new Error('The service desk has not sent a form for this request yet.');
+  const attached = await attachAccountForm({ issueKey: ctx.key, projectId: ctx.projectId, suggestion: ctx.suggestion });
+  return { added: true, number: attached.number, max: MAX_ACCOUNT_FORMS };
 });
 
 export const handler = resolver.getDefinitions();

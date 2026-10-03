@@ -7,7 +7,8 @@ const agent = await readFile(new URL('../src/backend/index.js', import.meta.url)
 const automation = await readFile(new URL('../src/backend/automation.js', import.meta.url), 'utf8');
 
 // Group outcomes, reminders and My Approvals scoping are covered by behaviour
-// tests in approval-lifecycle.test.mjs.
+// tests in approval-lifecycle.test.mjs; duplicate-approver suppression in
+// account-forms.test.mjs.
 
 function includesAll(source, fragments) {
   for (const fragment of fragments) assert.ok(source.includes(fragment), `Missing release safeguard: ${fragment}`);
@@ -44,12 +45,5 @@ test('agent panel re-evaluates rules for tickets already in the configured trigg
     "if (!suggestion && Array.isArray(settings.autoRules) && settings.autoRules.length > 0)",
     "await prepareRuleSuggestion({ issue: { key: issueKey, fields: { project: { id: projectId } } } });",
     "suggestion = await kvs.get(suggestionKey(issueKey));",
-  ]);
-});
-
-test('duplicate pending approvers are suppressed when a new approval group is created', () => {
-  includesAll(agent, [
-    "const pendingAccountIds = new Set(existing.map((r) => r.value).filter((r) => r?.status === 'pending').map((r) => r.approver?.accountId));",
-    "if (pendingAccountIds.has(accountId)) continue;",
   ]);
 });
