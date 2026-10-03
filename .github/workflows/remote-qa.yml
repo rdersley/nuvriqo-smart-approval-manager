@@ -103,3 +103,9 @@ jobs:
           code=$(curl -sS -o /tmp/project.json -w "%{http_code}" -u "$JIRA_EMAIL:$JIRA_API_TOKEN" "https://$DEPLOY_SITE/rest/api/3/project/TEST")
           test "$code" = "200" || (cat /tmp/project.json && exit 1)
           echo "TEST project reachable"
+
+  # Photograph the newly deployed build on the Nuvriqo test site (no deploy).
+  ui-screenshots:
+    needs: deploy-development
+    uses: ./.github/workflows/ui-screenshots.yml
+    secrets: inherit
