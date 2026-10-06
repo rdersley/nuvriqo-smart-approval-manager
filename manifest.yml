@@ -17,6 +17,13 @@ modules:
       title: Smart Approval
       icon: https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg
 
+  jira:adminPage:
+    - key: smart-approval-backup
+      resource: backup-ui
+      resolver:
+        function: backup-resolver
+      title: Smart Approval Manager backup & restore
+
   jira:projectSettingsPage:
     - key: smart-approval-project-settings
       resource: settings-page
@@ -63,6 +70,8 @@ modules:
       handler: backend/portal.handler
     - key: config-resolver
       handler: backend/config.handler
+    - key: backup-resolver
+      handler: backend/backup-handler.handler
     - key: auto-rule-worker
       handler: backend/automation.run
     - key: reminder-worker
@@ -83,6 +92,8 @@ resources:
     path: src/frontend/portal-approvals.jsx
   - key: settings-page
     path: src/frontend/settings.jsx
+  - key: backup-ui
+    path: static/backup/build
 
 permissions:
   scopes:
