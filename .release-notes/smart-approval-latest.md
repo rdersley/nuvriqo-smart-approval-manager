@@ -1,0 +1,1 @@
+Latest tested Smart Approval Manager candidate: polished agent approval panel, polished portal approvals, direct portal approve/decline actions, and compact preview details. Automated regression and Forge lint passed; development build installed successfully on the Retail in Motion Jira site.

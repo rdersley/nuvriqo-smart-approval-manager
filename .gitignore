@@ -135,5 +135,11 @@ dist
 .yarn/install-state.gz
 .pnp.*
 
+# Playwright sessions and evidence (never commit Jira sessions)
+.auth/
+screenshots/
+test-results/
+playwright-report/
+
 # Backup & restore page build (npm run build)
 static/backup/build/
