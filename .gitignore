@@ -140,3 +140,6 @@ dist
 screenshots/
 test-results/
 playwright-report/
+
+# Backup & restore page build (npm run build)
+static/backup/build/
