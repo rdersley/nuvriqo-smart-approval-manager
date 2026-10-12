@@ -68,7 +68,9 @@ jobs:
     env:
       FORGE_EMAIL: ${{ secrets.FORGE_EMAIL }}
       FORGE_API_TOKEN: ${{ secrets.FORGE_API_TOKEN }}
-      DEPLOY_SITE: ${{ github.ref == 'refs/heads/feature/jsm-forms-integration' && 'retailinmotion.atlassian.net' || inputs.site || 'nuvriqo.atlassian.net' }}
+      # The work site runs the separate Retail inMotion app (RiM-smart-approval-manager)
+      # since 2026-10-12; this app's development environment is the nuvriqo test site only.
+      DEPLOY_SITE: ${{ inputs.site || 'nuvriqo.atlassian.net' }}
       DEPLOY_ENVIRONMENT: ${{ inputs.environment || 'development' }}
       DEPLOY_PRODUCT: ${{ inputs.product || 'jira' }}
     steps:
