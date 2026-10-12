@@ -47,6 +47,7 @@ jobs:
           npm install
           npm audit --audit-level=critical
           npm install --no-save @playwright/test
+          npm run build
 
       - name: Run code checks
         run: npm test
