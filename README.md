@@ -2,6 +2,8 @@
 
 A Forge app that makes customer approvals simple for Jira Service Management agents, project admins and portal customers.
 
+**Live on the Atlassian Marketplace for Jira Cloud:** [install or start a free trial](https://marketplace.atlassian.com/apps/3599181233/smart-approval-manager-for-jira-service-management?utm_source=github&utm_medium=readme&utm_campaign=smart_approval_manager) · [product page and demo video](https://nuvriqo.com/apps/smart-approval-manager.html) · [support](https://nuvriqo.com/support.html)
+
 ## What it does
 
 ### Agent
