@@ -1,0 +1,135 @@
+name: Create and Deploy Work UAT Copy
+
+on:
+  workflow_dispatch:
+    inputs:
+      developer_space_id:
+        description: Nuvriqo Developer Space ID (optional if Forge can resolve it automatically)
+        required: false
+        type: string
+        default: ''
+      confirm:
+        description: Create a brand-new unlicensed UAT Forge app and deploy it
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  create-and-deploy-uat:
+    if: inputs.confirm == true
+    runs-on: ubuntu-latest
+    env:
+      FORGE_EMAIL: ${{ secrets.FORGE_EMAIL }}
+      FORGE_API_TOKEN: ${{ secrets.FORGE_API_TOKEN }}
+      UAT_APP_NAME: Smart Approval Manager - Work UAT
+      EXPECTED_SOURCE_APP_ID: 64448e4c-1a3a-4dd4-a8e7-c198c6d5eaad
+      DEVELOPER_SPACE_ID: ${{ inputs.developer_space_id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          if ! npm ci; then
+            rm -rf node_modules package-lock.json
+            npm install --no-audit --no-fund
+          fi
+
+      - name: Verify source app and prepare unlicensed copy
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import os, re
+
+          p = Path('manifest.yml')
+          text = p.read_text()
+          expected = os.environ['EXPECTED_SOURCE_APP_ID']
+
+          if f'ari:cloud:ecosystem::app/{expected}' not in text:
+              raise SystemExit('Safety stop: manifest is not the expected Smart Approval Manager source app')
+
+          text, count = re.subn(r'\n  licensing:\n    enabled: true\n', '\n', text, count=1)
+          if count != 1:
+              raise SystemExit('Safety stop: expected Marketplace licensing block was not found')
+
+          p.write_text(text)
+          print('Prepared an unlicensed working copy. Source repository file is unchanged.')
+          PY
+
+      - name: Check Forge credentials
+        shell: bash
+        run: |
+          test -n "$FORGE_EMAIL" || (echo "Missing FORGE_EMAIL" && exit 1)
+          test -n "$FORGE_API_TOKEN" || (echo "Missing FORGE_API_TOKEN" && exit 1)
+
+      - name: Install Forge CLI
+        run: npm install --global @forge/cli
+
+      - name: Show available Developer Spaces
+        shell: bash
+        run: |
+          forge settings set usage-analytics false
+          forge developer-spaces list --json || forge developer-spaces list
+
+      - name: Register separate UAT Forge app
+        shell: bash
+        run: |
+          if [ -n "$DEVELOPER_SPACE_ID" ]; then
+            forge register "$UAT_APP_NAME" --developer-space-id "$DEVELOPER_SPACE_ID" --accept-terms
+          else
+            forge register "$UAT_APP_NAME" --accept-terms
+          fi
+
+          echo 'Registered a brand-new Forge app. The submitted Marketplace app was not modified.'
+
+      - name: Capture UAT App ID
+        id: uat
+        shell: bash
+        run: |
+          UAT_APP_ID=$(python - <<'PY'
+          import re
+          from pathlib import Path
+          text = Path('manifest.yml').read_text()
+          m = re.search(r'ari:cloud:ecosystem::app/([0-9a-fA-F-]{36})', text)
+          if not m:
+              raise SystemExit('Could not read the newly registered UAT App ID')
+          print(m.group(1))
+          PY
+          )
+
+          if [ "$UAT_APP_ID" = "$EXPECTED_SOURCE_APP_ID" ]; then
+            echo 'Safety stop: Forge register did not produce a new App ID'
+            exit 1
+          fi
+
+          echo "uat_app_id=$UAT_APP_ID" >> "$GITHUB_OUTPUT"
+          echo "UAT App ID: $UAT_APP_ID"
+
+      - name: Validate UAT copy
+        shell: bash
+        run: |
+          npm test
+          forge settings set default-environment production
+          forge lint
+
+      - name: Deploy UAT copy to production environment
+        run: forge deploy --environment production --non-interactive
+
+      - name: Deployment summary
+        shell: bash
+        run: |
+          echo '------------------------------------------------------------'
+          echo 'Smart Approval Manager - Work UAT is registered and deployed.'
+          echo "UAT App ID: ${{ steps.uat.outputs.uat_app_id }}"
+          echo 'Next: open this UAT app in Developer Console, enable Sharing,'
+          echo 'then copy its installation link for the Retail in Motion admin.'
+          echo 'Do NOT submit this UAT app to Marketplace and do NOT enable licensing.'
+          echo '------------------------------------------------------------'
