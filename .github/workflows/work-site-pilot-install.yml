@@ -31,6 +31,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          check-latest: true
       - name: Install dependencies
         shell: bash
         run: |
@@ -68,6 +69,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          check-latest: true
       - name: Check Forge credentials
         run: |
           test -n "$FORGE_EMAIL" || (echo "Missing FORGE_EMAIL" && exit 1)
